@@ -87,26 +87,26 @@ func register(srv *mcp.Server, s Service) {
 		}
 		return nil, listOut{n, c}, nil
 	})
-	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_read_note", Description: "Read a note, line range, or Markdown heading section. Read latest before writes.", Annotations: ro("Read note")}, func(ctx context.Context, r *mcp.CallToolRequest, in readIn) (*mcp.CallToolResult, noteOut, error) {
+	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_read_note", Description: "Read a note, line range, or Markdown heading section. Read latest before writes.", Annotations: ro("Read note")}, func(ctx context.Context, r *mcp.CallToolRequest, in readIn) (*mcp.CallToolResult, *noteOut, error) {
 		n, e := s.Workspace.Read(ctx, in.Path, in.Section, in.StartLine, in.EndLine, in.MaxCharacters)
 		if e != nil {
-			return toolErr(e), noteOut{}, nil
+			return toolErr(e), nil, nil
 		}
-		return nil, noteOut{n}, nil
+		return nil, &noteOut{n}, nil
 	})
-	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_create_note", Description: "Create a Markdown note with validated path, atomic write and mandatory audit. May modify data.", Annotations: rw("Create note", false, false)}, func(ctx context.Context, r *mcp.CallToolRequest, in createIn) (*mcp.CallToolResult, noteOut, error) {
+	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_create_note", Description: "Create a Markdown note with validated path, atomic write and mandatory audit. May modify data.", Annotations: rw("Create note", false, false)}, func(ctx context.Context, r *mcp.CallToolRequest, in createIn) (*mcp.CallToolResult, *noteOut, error) {
 		n, e := s.Workspace.Create(ctx, in.Path, in.Content, in.ExpectedHash, in.Overwrite, in.CreateParentDirectories)
 		if e != nil {
-			return toolErr(e), noteOut{}, nil
+			return toolErr(e), nil, nil
 		}
-		return nil, noteOut{n}, nil
+		return nil, &noteOut{n}, nil
 	})
-	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_update_note", Description: "Safely update a note using optimistic expected_hash, atomic replacement and audit. May modify data.", Annotations: rw("Update note", true, false)}, func(ctx context.Context, r *mcp.CallToolRequest, in updateIn) (*mcp.CallToolResult, noteOut, error) {
+	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_update_note", Description: "Safely update a note using optimistic expected_hash, atomic replacement and audit. May modify data.", Annotations: rw("Update note", true, false)}, func(ctx context.Context, r *mcp.CallToolRequest, in updateIn) (*mcp.CallToolResult, *noteOut, error) {
 		n, e := s.Workspace.Update(ctx, in.Path, in.Operation, in.Content, in.Section, in.FindText, in.Replacement, in.ExpectedHash)
 		if e != nil {
-			return toolErr(e), noteOut{}, nil
+			return toolErr(e), nil, nil
 		}
-		return nil, noteOut{n}, nil
+		return nil, &noteOut{n}, nil
 	})
 }
 func toolErr(err error) *mcp.CallToolResult {
