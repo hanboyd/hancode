@@ -5,6 +5,7 @@ go 1.26.5
 require github.com/modelcontextprotocol/go-sdk v1.6.1
 
 require (
+	github.com/fsnotify/fsnotify v1.10.1
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.39.1
 )

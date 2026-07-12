@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"time"
 
 	"github.com/hanboyd/notegen-mcp/internal/domain"
 	"github.com/hanboyd/notegen-mcp/internal/index"
@@ -17,6 +18,7 @@ const Instructions = "所有路径均相对于配置的 NoteGen 根目录。修�
 type Service struct {
 	Workspace                           *notegen.Workspace
 	Index                               *index.Store
+	Watcher                             *index.Watcher
 	WorkspaceRoot                       string
 	Version, NoteGenVersion, Permission string
 }
@@ -37,11 +39,17 @@ func rw(title string, destructive, idempotent bool) *mcp.ToolAnnotations {
 
 type statusIn struct{}
 type statusOut struct {
-	ServerVersion    string `json:"server_version"`
-	GoVersion        string `json:"go_version"`
-	NoteGenVersion   string `json:"notegen_version"`
-	PermissionMode   string `json:"permission_mode"`
-	NetworkListening bool   `json:"network_listening"`
+	ServerVersion       string `json:"server_version"`
+	GoVersion           string `json:"go_version"`
+	NoteGenVersion      string `json:"notegen_version"`
+	PermissionMode      string `json:"permission_mode"`
+	NetworkListening    bool   `json:"network_listening"`
+	IndexedNotes        int    `json:"indexed_notes"`
+	IndexSchemaVersion  int    `json:"index_schema_version"`
+	IndexSizeBytes      int64  `json:"index_size_bytes"`
+	WatcherRunning      bool   `json:"watcher_running"`
+	LastWatcherEventAt  string `json:"last_watcher_event_at,omitempty"`
+	PendingIndexUpdates int64  `json:"pending_index_updates"`
 }
 type listIn struct {
 	Folder string `json:"folder,omitempty" jsonschema:"folder relative to workspace"`
@@ -112,7 +120,23 @@ type reindexOut struct {
 
 func register(srv *mcp.Server, s Service) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_get_status", Description: "Read local server and workspace mode status. Read-only and idempotent.", Annotations: ro("NoteGen status")}, func(ctx context.Context, r *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, statusOut, error) {
-		return nil, statusOut{s.Version, runtime.Version(), s.NoteGenVersion, s.Permission, false}, nil
+		out := statusOut{ServerVersion: s.Version, GoVersion: runtime.Version(), NoteGenVersion: s.NoteGenVersion, PermissionMode: s.Permission, NetworkListening: false}
+		if s.Index != nil {
+			if st, e := s.Index.State(ctx); e == nil {
+				out.IndexedNotes = st.IndexedNotes
+				out.IndexSchemaVersion = st.SchemaVersion
+				out.IndexSizeBytes = st.SizeBytes
+			}
+		}
+		if s.Watcher != nil {
+			ws := s.Watcher.State()
+			out.WatcherRunning = ws.Running
+			out.PendingIndexUpdates = ws.Pending
+			if !ws.LastEventAt.IsZero() {
+				out.LastWatcherEventAt = ws.LastEventAt.UTC().Format(time.RFC3339Nano)
+			}
+		}
+		return nil, out, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_list_notes", Description: "List a bounded page of Markdown notes; paths are relative and bodies are summaries.", Annotations: ro("List notes")}, func(ctx context.Context, r *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, listOut, error) {
 		n, c, e := s.Workspace.List(ctx, in.Folder, in.Limit, in.Cursor)

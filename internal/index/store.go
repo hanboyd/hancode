@@ -249,22 +249,29 @@ func (s *Store) scan(ctx context.Context, root string, full bool) (Stats, error)
 }
 
 func upsertFile(ctx context.Context, tx *sql.Tx, path, rel, norm string) (int, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
 	st, err := os.Stat(path)
 	if err != nil {
 		return 0, err
 	}
-	hash := notegen.Hash(b)
+	updatedText := st.ModTime().UTC().Format(time.RFC3339Nano)
 	var old string
-	err = tx.QueryRowContext(ctx, "SELECT content_hash FROM notes WHERE normalized_path=?", norm).Scan(&old)
+	var oldSize int64
+	var oldUpdated string
+	err = tx.QueryRowContext(ctx, "SELECT content_hash,file_size,updated_at FROM notes WHERE normalized_path=?", norm).Scan(&old, &oldSize, &oldUpdated)
 	created := err == sql.ErrNoRows
 	if err != nil && err != sql.ErrNoRows {
 		return 0, err
 	}
+	if !created && oldSize == st.Size() && oldUpdated == updatedText {
+		return 0, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	hash := notegen.Hash(b)
 	if old == hash {
+		_, err = tx.ExecContext(ctx, "UPDATE notes SET file_size=?,updated_at=?,indexed_at=? WHERE normalized_path=?", st.Size(), updatedText, time.Now().UTC().Format(time.RFC3339Nano), norm)
 		return 0, nil
 	}
 	content := string(b)
@@ -274,7 +281,7 @@ func upsertFile(ctx context.Context, tx *sql.Tx, path, rel, norm string) (int, e
 	tj, _ := json.Marshal(tags)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	noteID := notegen.Hash([]byte(norm))
-	_, err = tx.ExecContext(ctx, `INSERT INTO notes(note_id,relative_path,normalized_path,title,content,tags_json,created_at,updated_at,indexed_at,content_hash,file_size,frontmatter_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(normalized_path) DO UPDATE SET relative_path=excluded.relative_path,title=excluded.title,content=excluded.content,tags_json=excluded.tags_json,updated_at=excluded.updated_at,indexed_at=excluded.indexed_at,content_hash=excluded.content_hash,file_size=excluded.file_size,frontmatter_json=excluded.frontmatter_json`, noteID, rel, norm, title, content, string(tj), st.ModTime().UTC().Format(time.RFC3339Nano), st.ModTime().UTC().Format(time.RFC3339Nano), now, hash, st.Size(), string(fj))
+	_, err = tx.ExecContext(ctx, `INSERT INTO notes(note_id,relative_path,normalized_path,title,content,tags_json,created_at,updated_at,indexed_at,content_hash,file_size,frontmatter_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(normalized_path) DO UPDATE SET relative_path=excluded.relative_path,title=excluded.title,content=excluded.content,tags_json=excluded.tags_json,updated_at=excluded.updated_at,indexed_at=excluded.indexed_at,content_hash=excluded.content_hash,file_size=excluded.file_size,frontmatter_json=excluded.frontmatter_json`, noteID, rel, norm, title, content, string(tj), updatedText, updatedText, now, hash, st.Size(), string(fj))
 	if err != nil {
 		return 0, err
 	}

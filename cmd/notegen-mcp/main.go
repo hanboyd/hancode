@@ -66,9 +66,19 @@ func main() {
 	}
 	defer idx.Close()
 	_, _ = idx.Incremental(context.Background(), c.NoteGenRoots[0])
-	srv := mcpserver.New(mcpserver.Service{Workspace: w, Index: idx, WorkspaceRoot: c.NoteGenRoots[0], Version: version, NoteGenVersion: c.NoteGenVersion, Permission: c.PermissionMode})
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	var watcher *index.Watcher
+	if c.WatchFiles {
+		watcher, e = index.NewWatcher(c.NoteGenRoots[0], idx)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "watcher unavailable: %v\n", e)
+		} else {
+			watcher.Start(ctx)
+			defer watcher.Close()
+		}
+	}
+	srv := mcpserver.New(mcpserver.Service{Workspace: w, Index: idx, Watcher: watcher, WorkspaceRoot: c.NoteGenRoots[0], Version: version, NoteGenVersion: c.NoteGenVersion, Permission: c.PermissionMode})
 	if e = transport.NewStdio(srv).Start(ctx); e != nil && ctx.Err() == nil {
 		fatal("WORKSPACE_UNAVAILABLE", e)
 	}
