@@ -4,7 +4,10 @@ go 1.26.5
 
 require github.com/modelcontextprotocol/go-sdk v1.6.1
 
-require modernc.org/sqlite v1.39.1
+require (
+	gopkg.in/yaml.v3 v3.0.1
+	modernc.org/sqlite v1.39.1
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

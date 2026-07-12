@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"github.com/hanboyd/notegen-mcp/internal/domain"
+	"github.com/hanboyd/notegen-mcp/internal/index"
 	"github.com/hanboyd/notegen-mcp/internal/notegen"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -15,6 +16,8 @@ const Instructions = "所有路径均相对于配置的 NoteGen 根目录。修�
 
 type Service struct {
 	Workspace                           *notegen.Workspace
+	Index                               *index.Store
+	WorkspaceRoot                       string
 	Version, NoteGenVersion, Permission string
 }
 
@@ -75,6 +78,37 @@ type updateIn struct {
 	Replacement  string `json:"replacement,omitempty"`
 	ExpectedHash string `json:"expected_hash"`
 }
+type searchIn struct {
+	Query          string   `json:"query"`
+	SearchIn       string   `json:"search_in,omitempty"`
+	Folder         string   `json:"folder,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	ExactPhrase    bool     `json:"exact_phrase,omitempty"`
+	ExcludeFolders []string `json:"exclude_folders,omitempty"`
+	Limit          int      `json:"limit,omitempty"`
+	Cursor         string   `json:"cursor,omitempty"`
+}
+type searchOut struct {
+	Results       []index.SearchResult `json:"results"`
+	NextCursor    string               `json:"next_cursor,omitempty"`
+	TotalEstimate int                  `json:"total_estimate"`
+	IndexState    string               `json:"index_state"`
+}
+type reindexIn struct {
+	Mode         string `json:"mode" jsonschema:"full,incremental,note,folder"`
+	Path         string `json:"path,omitempty"`
+	VerifyHashes bool   `json:"verify_hashes,omitempty"`
+}
+type reindexOut struct {
+	Scanned    int             `json:"scanned"`
+	Created    int             `json:"created"`
+	Updated    int             `json:"updated"`
+	Removed    int             `json:"removed"`
+	Unchanged  int             `json:"unchanged"`
+	Failed     int             `json:"failed"`
+	DurationMS int64           `json:"duration_ms"`
+	Failures   []index.Failure `json:"failures,omitempty"`
+}
 
 func register(srv *mcp.Server, s Service) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_get_status", Description: "Read local server and workspace mode status. Read-only and idempotent.", Annotations: ro("NoteGen status")}, func(ctx context.Context, r *mcp.CallToolRequest, in statusIn) (*mcp.CallToolResult, statusOut, error) {
@@ -99,6 +133,11 @@ func register(srv *mcp.Server, s Service) {
 		if e != nil {
 			return toolErr(e), nil, nil
 		}
+		if s.Index != nil {
+			if _, e = s.Index.Incremental(ctx, s.WorkspaceRoot); e != nil {
+				return toolErr(&domain.AppError{Code: domain.ErrIndexUnavailable, Message: "note created but index update failed", Cause: e}), nil, nil
+			}
+		}
 		return nil, &noteOut{n}, nil
 	})
 	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_update_note", Description: "Safely update a note using optimistic expected_hash, atomic replacement and audit. May modify data.", Annotations: rw("Update note", true, false)}, func(ctx context.Context, r *mcp.CallToolRequest, in updateIn) (*mcp.CallToolResult, *noteOut, error) {
@@ -106,7 +145,38 @@ func register(srv *mcp.Server, s Service) {
 		if e != nil {
 			return toolErr(e), nil, nil
 		}
+		if s.Index != nil {
+			if _, e = s.Index.Incremental(ctx, s.WorkspaceRoot); e != nil {
+				return toolErr(&domain.AppError{Code: domain.ErrIndexUnavailable, Message: "note updated but index update failed", Cause: e}), nil, nil
+			}
+		}
 		return nil, &noteOut{n}, nil
+	})
+	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_search", Description: "Search the persistent local Unicode 2/3-gram index with bounded snippets.", Annotations: ro("Search notes")}, func(ctx context.Context, r *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, *searchOut, error) {
+		if s.Index == nil {
+			return toolErr(&domain.AppError{Code: domain.ErrIndexUnavailable, Message: "index unavailable"}), nil, nil
+		}
+		p, e := s.Index.Search(ctx, index.SearchQuery{Query: in.Query, SearchIn: in.SearchIn, Folder: in.Folder, Tags: in.Tags, ExactPhrase: in.ExactPhrase, ExcludeFolders: in.ExcludeFolders, Limit: in.Limit, Cursor: in.Cursor})
+		if e != nil {
+			return toolErr(&domain.AppError{Code: domain.ErrIndexUnavailable, Message: "search failed", Cause: e}), nil, nil
+		}
+		return nil, &searchOut{p.Results, p.NextCursor, p.TotalEstimate, p.IndexState}, nil
+	})
+	mcp.AddTool(srv, &mcp.Tool{Name: "notegen_reindex", Description: "Safely rebuild or incrementally reconcile the local cache index; Markdown is never changed.", Annotations: rw("Reindex", false, true)}, func(ctx context.Context, r *mcp.CallToolRequest, in reindexIn) (*mcp.CallToolResult, *reindexOut, error) {
+		if s.Index == nil {
+			return toolErr(&domain.AppError{Code: domain.ErrIndexUnavailable, Message: "index unavailable"}), nil, nil
+		}
+		var st index.Stats
+		var e error
+		if in.Mode == "full" {
+			st, e = s.Index.FullRebuild(ctx, s.WorkspaceRoot)
+		} else {
+			st, e = s.Index.Incremental(ctx, s.WorkspaceRoot)
+		}
+		if e != nil {
+			return toolErr(&domain.AppError{Code: domain.ErrIndexUnavailable, Message: "reindex failed", Cause: e}), nil, nil
+		}
+		return nil, &reindexOut{st.Scanned, st.Created, st.Updated, st.Removed, st.Unchanged, st.Failed, st.DurationMS, st.Failures}, nil
 	})
 }
 func toolErr(err error) *mcp.CallToolResult {

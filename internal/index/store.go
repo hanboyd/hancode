@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hanboyd/notegen-mcp/internal/markdown"
 	"github.com/hanboyd/notegen-mcp/internal/notegen"
+	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 )
 
@@ -23,6 +25,7 @@ const TokenizerVersion = "unicode-ngram-2-3-v1"
 type Store struct {
 	db   *sql.DB
 	path string
+	mu   sync.RWMutex
 }
 type Stats struct {
 	Scanned    int       `json:"scanned"`
@@ -61,7 +64,7 @@ func Open(path string) (*Store, error) {
 	}
 	return s, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error { s.mu.Lock(); defer s.mu.Unlock(); return s.db.Close() }
 func (s *Store) init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;`); err != nil {
 		return err
@@ -75,6 +78,8 @@ CREATE TABLE IF NOT EXISTS notes (
  frontmatter_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC, normalized_path);
+CREATE TABLE IF NOT EXISTS note_tokens (note_id TEXT NOT NULL, token TEXT NOT NULL, field TEXT NOT NULL, frequency INTEGER NOT NULL, PRIMARY KEY(note_id,token,field), FOREIGN KEY(note_id) REFERENCES notes(note_id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS idx_note_tokens_token ON note_tokens(token,note_id);
 `)
 	if err != nil {
 		return err
@@ -132,10 +137,28 @@ func Rebuild(ctx context.Context, root, indexPath string) (Stats, error) {
 	return stats, nil
 }
 func (s *Store) Incremental(ctx context.Context, root string) (Stats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	start := time.Now()
 	st, err := s.scan(ctx, root, false)
 	st.DurationMS = time.Since(start).Milliseconds()
 	return st, err
+}
+
+func (s *Store) FullRebuild(ctx context.Context, root string) (Stats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.db.Close()
+	stats, rebuildErr := Rebuild(ctx, root, s.path)
+	reopened, openErr := Open(s.path)
+	if openErr != nil {
+		return stats, openErr
+	}
+	s.db = reopened.db
+	if rebuildErr != nil {
+		return stats, rebuildErr
+	}
+	return stats, nil
 }
 
 func (s *Store) scan(ctx context.Context, root string, full bool) (Stats, error) {
@@ -250,16 +273,54 @@ func upsertFile(ctx context.Context, tx *sql.Tx, path, rel, norm string) (int, e
 	fj, _ := json.Marshal(front)
 	tj, _ := json.Marshal(tags)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err = tx.ExecContext(ctx, `INSERT INTO notes(note_id,relative_path,normalized_path,title,content,tags_json,created_at,updated_at,indexed_at,content_hash,file_size,frontmatter_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(normalized_path) DO UPDATE SET relative_path=excluded.relative_path,title=excluded.title,content=excluded.content,tags_json=excluded.tags_json,updated_at=excluded.updated_at,indexed_at=excluded.indexed_at,content_hash=excluded.content_hash,file_size=excluded.file_size,frontmatter_json=excluded.frontmatter_json`, notegen.Hash([]byte(norm)), rel, norm, title, content, string(tj), st.ModTime().UTC().Format(time.RFC3339Nano), st.ModTime().UTC().Format(time.RFC3339Nano), now, hash, st.Size(), string(fj))
+	noteID := notegen.Hash([]byte(norm))
+	_, err = tx.ExecContext(ctx, `INSERT INTO notes(note_id,relative_path,normalized_path,title,content,tags_json,created_at,updated_at,indexed_at,content_hash,file_size,frontmatter_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(normalized_path) DO UPDATE SET relative_path=excluded.relative_path,title=excluded.title,content=excluded.content,tags_json=excluded.tags_json,updated_at=excluded.updated_at,indexed_at=excluded.indexed_at,content_hash=excluded.content_hash,file_size=excluded.file_size,frontmatter_json=excluded.frontmatter_json`, noteID, rel, norm, title, content, string(tj), st.ModTime().UTC().Format(time.RFC3339Nano), st.ModTime().UTC().Format(time.RFC3339Nano), now, hash, st.Size(), string(fj))
 	if err != nil {
 		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM note_tokens WHERE note_id=?", noteID); err != nil {
+		return 0, err
+	}
+	fields := map[string]string{"title": title, "path": rel, "tags": strings.Join(tags, " "), "content": content}
+	for field, text := range fields {
+		for token, frequency := range Tokenize(text) {
+			if _, err = tx.ExecContext(ctx, "INSERT INTO note_tokens(note_id,token,field,frequency) VALUES(?,?,?,?)", noteID, token, field, frequency); err != nil {
+				return 0, err
+			}
+		}
 	}
 	if created {
 		return 1, nil
 	}
 	return 2, nil
 }
-func parseFrontmatter(content string) (map[string]any, []string) { return map[string]any{}, []string{} }
+func parseFrontmatter(content string) (map[string]any, []string) {
+	fm := map[string]any{}
+	normalized := strings.ReplaceAll(strings.TrimPrefix(content, "\ufeff"), "\r\n", "\n")
+	if !strings.HasPrefix(normalized, "---\n") {
+		return fm, []string{}
+	}
+	end := strings.Index(normalized[4:], "\n---")
+	if end < 0 || yaml.Unmarshal([]byte(normalized[4:4+end]), &fm) != nil {
+		return map[string]any{}, []string{}
+	}
+	var tags []string
+	switch v := fm["tags"].(type) {
+	case []any:
+		for _, x := range v {
+			tags = append(tags, fmt.Sprint(x))
+		}
+	case []string:
+		tags = v
+	case string:
+		for _, x := range strings.Split(v, ",") {
+			if x = strings.TrimSpace(x); x != "" {
+				tags = append(tags, x)
+			}
+		}
+	}
+	return fm, tags
+}
 func replaceDatabase(dst, tmp string) error {
 	backup := dst + ".previous"
 	_ = os.Remove(backup)
@@ -276,6 +337,8 @@ func replaceDatabase(dst, tmp string) error {
 	return nil
 }
 func (s *Store) State(ctx context.Context) (State, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var st State
 	var full, check sql.NullString
 	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM notes").Scan(&st.IndexedNotes); err != nil {

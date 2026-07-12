@@ -31,7 +31,7 @@ func TestToolDiscoveryAndAnnotations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Tools) != 5 {
+	if len(res.Tools) != 7 {
 		t.Fatalf("got %d tools", len(res.Tools))
 	}
 	for _, tool := range res.Tools {
