@@ -1,0 +1,22 @@
+{
+  "notegen_roots": ["D:/NoteGen/Workspace"],
+  "notegen_version": "0.31.0",
+  "permission_mode": "admin",
+  "allow_create": true,
+  "allow_update": true,
+  "allow_move": true,
+  "allow_batch_operations": true,
+  "allow_soft_delete": true,
+  "allow_git_checkpoint": true,
+  "allow_permanent_delete": false,
+  "trash_directory": "D:/NoteGen/.notegen-mcp-trash",
+  "index_directory": "D:/NoteGen/.notegen-mcp-index",
+  "log_directory": "D:/NoteGen/.notegen-mcp-logs",
+  "max_batch_files": 100,
+  "max_request_bytes": 5242880,
+  "max_note_bytes": 2097152,
+  "max_attachment_bytes": 20971520,
+  "watch_files": true,
+  "git_checkpoint_before_batch": true,
+  "audit_required": true
+}
