@@ -65,6 +65,98 @@ class LegacyKeySuppressorDecisionTests(unittest.TestCase):
             self.assertFalse(gate.physicalize_injected_event(event))
             self.assertEqual((int(event.flags), int(event.dwExtraInfo)), original)
 
+
+class LegacyKeySuppressorVoiceHotkeyPhysicalizeTests(unittest.TestCase):
+    """Real-device acceptance under commit ``e91b9c2`` confirmed that the
+    press/release TAP and the HOLD-mode sustained DOWN/UP paths both
+    delivered the bridge-injected ``lctrl`` / ``lalt`` edges to the
+    foreground application, but Typeless (and every other toggle-style
+    target on the supported set) silently dropped every event because
+    the events still carried ``LLKHF_INJECTED``.  The hook must drop
+    that flag for any VK in the configured voice hotkey so the target
+    reacts to the toggle.  The two halves of the physicalize patch are
+    a backward-compatible extension of the existing ralt path, so the
+    right-alt baseline tests above keep their semantics unchanged.
+    """
+
+    def _marked_event(self, vk_code, flags_extra=0):
+        return suppressor.KBDLLHOOKSTRUCT(
+            vkCode=vk_code,
+            scanCode=0x1D if vk_code == 0xA2 else 0x38,
+            flags=(
+                (suppressor.LLKHF_EXTENDED if flags_extra else 0)
+                | suppressor.LLKHF_INJECTED
+                | suppressor.LLKHF_LOWER_IL_INJECTED
+            ),
+            time=123,
+            dwExtraInfo=suppressor.VOICE_EVENT_EXTRA_INFO,
+        )
+
+    def test_physicalizes_lctrl_when_voice_hotkey_lists_lctrl(self):
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74}, voice_physicalize_vk_codes=frozenset({0xA2, 0xA4})
+        )
+        event = self._marked_event(0xA2)
+        self.assertTrue(gate.physicalize_injected_event(event))
+        self.assertFalse(int(event.flags) & suppressor.LLKHF_INJECTED)
+        self.assertFalse(int(event.flags) & suppressor.LLKHF_LOWER_IL_INJECTED)
+        self.assertEqual(event.dwExtraInfo, 0)
+
+    def test_physicalizes_lalt_when_voice_hotkey_lists_lalt(self):
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74}, voice_physicalize_vk_codes=frozenset({0xA2, 0xA4})
+        )
+        event = self._marked_event(0xA4)
+        self.assertTrue(gate.physicalize_injected_event(event))
+        self.assertFalse(int(event.flags) & suppressor.LLKHF_INJECTED)
+        self.assertEqual(event.dwExtraInfo, 0)
+
+    def test_does_not_physicalize_voice_hotkey_vk_without_marker(self):
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74}, voice_physicalize_vk_codes=frozenset({0xA2, 0xA4})
+        )
+        event = suppressor.KBDLLHOOKSTRUCT(
+            vkCode=0xA2,
+            scanCode=0x1D,
+            flags=suppressor.LLKHF_INJECTED,
+            time=123,
+            dwExtraInfo=0,
+        )
+        original = (int(event.flags), int(event.dwExtraInfo))
+        self.assertFalse(gate.physicalize_injected_event(event))
+        self.assertEqual((int(event.flags), int(event.dwExtraInfo)), original)
+
+    def test_does_not_physicalize_unrelated_vk_even_with_marker(self):
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74}, voice_physicalize_vk_codes=frozenset({0xA2, 0xA4})
+        )
+        # ``H`` is not part of the voice hotkey and not the legacy ralt
+        # physicalize candidate - so the hook must NOT strip its INJECTED
+        # flag, otherwise an unrelated screen reader or touch-typing tool's
+        # injected ``H`` would silently start looking like a physical key.
+        event = self._marked_event(0x48)
+        original = (int(event.flags), int(event.dwExtraInfo))
+        self.assertFalse(gate.physicalize_injected_event(event))
+        self.assertEqual((int(event.flags), int(event.dwExtraInfo)), original)
+
+    def test_empty_voice_physicalize_set_keeps_ralt_path_only(self):
+        # An explicitly empty voice_physicalize set must not regress the
+        # legacy ralt path - the gate still physicalises the right-alt
+        # single-key edge that Doubao depends on.
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74}, voice_physicalize_vk_codes=frozenset()
+        )
+        event = self._marked_event(0xA5)
+        self.assertTrue(gate.physicalize_injected_event(event))
+
+    def test_ralt_physicalize_unchanged_when_voice_hotkey_set_is_none(self):
+        # Default callers never pass voice_physicalize_vk_codes - the
+        # original ralt physicalize behaviour must keep working as a
+        # baseline.
+        gate = suppressor.LegacyKeySuppressor({0x74})
+        event = self._marked_event(0xA5)
+        self.assertTrue(gate.physicalize_injected_event(event))
+
     def test_does_not_suppress_unconfigured_vk_codes(self):
         gate = suppressor.LegacyKeySuppressor({0x74})
         self.assertFalse(gate.should_suppress(0x5B, 0))  # VK_LWIN

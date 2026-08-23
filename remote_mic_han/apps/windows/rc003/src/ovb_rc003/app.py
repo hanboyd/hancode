@@ -303,12 +303,36 @@ class RC003App:
         # narrowly intercepts the same legacy F5 leak and emits one marked
         # right-Alt edge before audio starts. Doubao's own callback then
         # physicalizes that marked edge.
+        # Voice-shortcut VK codes (modifiers + key) the bridge injects via
+        # ``_real_voice_event``.  The low-level hook drops the
+        # ``LLKHF_INJECTED`` flag off these VK codes so the foreground
+        # application (Typeless, 千问, ...) reacts to them as a physical
+        # key chord and not as an injected event.  Without this, real
+        # device acceptance ran through the press/release path but no
+        # target toggled on the edges - the events were delivered but
+        # every toggle target silently dropped them.  See
+        # ``docs/decisions/ADR-0005-voice-hotkey-physicalize.md``.
+        voice_hotkey_tokens = tuple(self._voice_hotkey.modifiers) + (
+            self._voice_hotkey.key,
+        )
+        try:
+            voice_physicalize_vk_codes = frozenset(
+                win32_keys.resolve_vk_codes(voice_hotkey_tokens)
+            )
+        except Exception:
+            # Off-Windows unit tests and unusual hotkey spellings; fall
+            # back to an empty set rather than crashing the bridge.  The
+            # legacy ralt path below still physicalises one VK at a
+            # time on its own.
+            voice_physicalize_vk_codes = frozenset()
+
         self._legacy_key_suppressor = legacy_key_suppressor_windows.LegacyKeySuppressor(
             {0x74},
             on_key_event=self._on_legacy_key_event,
             on_key_transform=self._transform_legacy_voice_key,
             on_key_emit=self._emit_legacy_voice_key,
             rc003_vk_codes=frozenset(raw_input_windows.KEYBOARD_VK_TO_BUTTON),
+            voice_physicalize_vk_codes=voice_physicalize_vk_codes,
         )
         try:
             self._legacy_key_suppressor.start()

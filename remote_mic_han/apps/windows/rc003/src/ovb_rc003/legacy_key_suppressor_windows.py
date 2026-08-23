@@ -114,6 +114,7 @@ class LegacyKeySuppressor:
         on_key_emit: Optional[Callable[[PhysicalKeyTarget, bool], bool]] = None,
         *,
         rc003_vk_codes: Optional[FrozenSet[int]] = None,
+        voice_physicalize_vk_codes: Optional[FrozenSet[int]] = None,
         consume_wait_seconds: float = 0.060,
     ) -> None:
         self._suppress_vk_codes: FrozenSet[int] = frozenset(int(vk) for vk in suppress_vk_codes)
@@ -129,6 +130,21 @@ class LegacyKeySuppressor:
         # through with no latency, exactly like the upstream special-key hook.
         self._rc003_vk_codes: Optional[FrozenSet[int]] = (
             None if rc003_vk_codes is None else frozenset(int(vk) for vk in rc003_vk_codes)
+        )
+        # Voice-shortcut VK codes (modifiers + key) that the bridge injects
+        # for the voice hotkey. The low-level hook rewrites ``LLKHF_INJECTED``
+        # off these events so target applications (Typeless, 千问, ...) do
+        # not see the bridge-owned edges as synthetic and discard them on
+        # the injected-input reject path they use for any non-physical key.
+        # Without this, real-device acceptance surfaced that the user's
+        # voice window never opened even when the press/release TAP path was
+        # exercised end-to-end - the events were delivered but every toggle
+        # target silently dropped them.  See
+        # ``docs/decisions/ADR-0005-voice-hotkey-physicalize.md``.
+        self._voice_physicalize_vk_codes: Optional[FrozenSet[int]] = (
+            None
+            if voice_physicalize_vk_codes is None
+            else frozenset(int(vk) for vk in voice_physicalize_vk_codes)
         )
         # The hook callback runs synchronously ahead of the Raw Input message
         # loop for the same physical press, so the arming edge can land up to
@@ -162,13 +178,40 @@ class LegacyKeySuppressor:
         return int(vk_code) in self._suppress_vk_codes
 
     def physicalize_injected_event(self, event: KBDLLHOOKSTRUCT) -> bool:
-        """Make one bridge-owned voice edge look physical while forwarding."""
+        """Make one bridge-owned voice edge look physical while forwarding.
+
+        Two independent shapes are supported:
+
+        * The legacy single-key ralt edge (``vk=0xA5``) that Doubao's own
+          callback physicalises when the HOLD-mode built-in shortcut is
+          selected.  Retained as a baseline so the upstream-shaped edge
+          keeps working unchanged.
+        * Every VK in ``voice_physicalize_vk_codes`` - the modifiers and
+          key of the user's configured voice hotkey, e.g. ``lctrl``
+          + ``lalt`` for Typeless.  Bridge-injected edges for any of
+          these VK codes are also rewritten to drop
+          ``LLKHF_INJECTED``/``LLKHF_LOWER_IL_INJECTED`` and clear
+          ``dwExtraInfo`` so the foreground application receives a
+          physical-shaped event and reacts to the toggle.
+
+        Both shapes are guarded by ``dwExtraInfo == VOICE_EVENT_EXTRA_INFO``
+        so that a foreign app's unrelated injected edges (a screen reader,
+        a touch-typing automation tool, ...) still see the original
+        ``LLKHF_INJECTED`` flag intact; only bridge-owned voice shortcuts
+        get physicalised, never unrelated traffic.
+        """
 
         if not (int(event.flags) & LLKHF_INJECTED):
             return False
-        if int(event.vkCode) != 0xA5:
-            return False
         if int(event.dwExtraInfo) != VOICE_EVENT_EXTRA_INFO:
+            return False
+        vk = int(event.vkCode)
+        is_ralt_legacy = vk == 0xA5
+        is_voice_hotkey = (
+            self._voice_physicalize_vk_codes is not None
+            and vk in self._voice_physicalize_vk_codes
+        )
+        if not is_ralt_legacy and not is_voice_hotkey:
             return False
         event.flags = int(event.flags) & ~(
             LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED
