@@ -93,6 +93,76 @@ class DefaultConfigPrivacyTests(unittest.TestCase):
         self.assertEqual(loaded["voice_hotkey"], "ralt")
 
 
+class VoiceReleaseDebounceConfigTests(unittest.TestCase):
+    """ADR-0003 "Window refinement 2026-08-23" config defaults and clamping.
+
+    The debounce window lives at ``voice_release_debounce_seconds`` and is
+    clamped to the [0.050, 0.500] band by
+    ``config._normalize_voice_release_debounce``.  Any out-of-range or
+    non-numeric value falls back to the 0.200 production default rather
+    than silently regressing to a 0 ms or unbounded window.
+    """
+
+    def test_default_is_two_hundred_milliseconds(self):
+        self.assertEqual(config.default_config()["voice_release_debounce_seconds"], 0.200)
+
+    def test_legal_value_inside_range_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"voice_release_debounce_seconds": 0.150}),
+                encoding="utf-8",
+            )
+            loaded = config.load_config(path)
+        self.assertAlmostEqual(loaded["voice_release_debounce_seconds"], 0.150)
+
+    def test_value_below_minimum_falls_back_to_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"voice_release_debounce_seconds": 0.010}),
+                encoding="utf-8",
+            )
+            loaded = config.load_config(path)
+        self.assertEqual(loaded["voice_release_debounce_seconds"], 0.200)
+
+    def test_value_above_maximum_falls_back_to_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"voice_release_debounce_seconds": 1.5}),
+                encoding="utf-8",
+            )
+            loaded = config.load_config(path)
+        self.assertEqual(loaded["voice_release_debounce_seconds"], 0.200)
+
+    def test_non_numeric_value_falls_back_to_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps({"voice_release_debounce_seconds": "not-a-number"}),
+                encoding="utf-8",
+            )
+            loaded = config.load_config(path)
+        self.assertEqual(loaded["voice_release_debounce_seconds"], 0.200)
+
+    def test_missing_key_after_load_falls_back_to_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({}), encoding="utf-8")
+            loaded = config.load_config(path)
+        self.assertEqual(loaded["voice_release_debounce_seconds"], 0.200)
+
+    def test_save_round_trips_a_legal_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            data = config.default_config()
+            data["voice_release_debounce_seconds"] = 0.350
+            config.save_config(path, data)
+            loaded = config.load_config(path)
+        self.assertAlmostEqual(loaded["voice_release_debounce_seconds"], 0.350)
+
+
 class SaveConfigPrivacyGuardTests(unittest.TestCase):
     def test_save_config_rejects_forbidden_keys(self):
         with tempfile.TemporaryDirectory() as tmp:

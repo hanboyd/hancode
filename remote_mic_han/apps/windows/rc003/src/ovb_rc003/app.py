@@ -183,8 +183,17 @@ class RC003App:
         self._voice_edge_queue: "queue.Queue[Optional[tuple]]" = queue.Queue(maxsize=64)
         self._voice_edge_worker_stop_event = threading.Event()
         self._voice_edge_worker_thread: Optional[threading.Thread] = None
+        # ``_normalize_voice_release_debounce`` (see ``config.py``) clamps
+        # the stored value into the [0.050, 0.500] s band documented in
+        # ADR-0003 "Window refinement 2026-08-23", so the key is always
+        # present and in-range by the time we read it here.  The hard
+        # default in ``self._config.get`` mirrors the debouncer default so
+        # a stripped config.json still produces the production 200 ms
+        # window.
         self._voice_edge_debouncer = voice_edge_debouncer.VoiceEdgeDebouncer(
-            release_window_seconds=0.200,
+            release_window_seconds=float(
+                self._config.get("voice_release_debounce_seconds", 0.200)
+            ),
         )
         # Fix C of ADR-0003: how long the worker is willing to wait for
         # the PortAudio output buffer to drain after physical release

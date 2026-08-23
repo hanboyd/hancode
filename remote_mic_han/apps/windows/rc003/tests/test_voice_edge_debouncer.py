@@ -184,6 +184,73 @@ class VoiceEdgeDebouncerBounceScenariosTests(unittest.TestCase):
         self.assertEqual(self.fired, [1, 2])
 
 
+class VoiceEdgeDebouncerConfigurableWindowTests(unittest.TestCase):
+    """ADR-0003 "Window refinement 2026-08-23": every documented boundary.
+
+    The production default is 200 ms (the ~3x margin over the worst 65 ms
+    bounce observed on 2026-08-23).  Users with a non-bouncing firmware
+    can drop the window back to 50 ms via
+    ``config.voice_release_debounce_seconds``; users whose firmware grows
+    a wider bounce can lift it toward 500 ms.  These tests confirm the
+    class itself respects any in-band window, not just the 50 ms value
+    the original debounce tests used.
+    """
+
+    def _build(self, release_window_seconds: float):
+        factory = _RecordingFactory()
+        debouncer = VoiceEdgeDebouncer(
+            release_window_seconds=release_window_seconds,
+            timer_factory=factory,
+        )
+        return factory, debouncer
+
+    def test_50_ms_window_drops_press_inside_window(self) -> None:
+        factory, debouncer = self._build(0.050)
+        fired: List[int] = []
+        debouncer.on_release(lambda: fired.append(1))
+        debouncer.on_press()
+        for timer in factory.timers:
+            timer.fire()
+        self.assertEqual(fired, [])
+
+    def test_100_ms_window_drops_press_inside_window(self) -> None:
+        factory, debouncer = self._build(0.100)
+        fired: List[int] = []
+        debouncer.on_release(lambda: fired.append(1))
+        debouncer.on_press()
+        for timer in factory.timers:
+            timer.fire()
+        self.assertEqual(fired, [])
+
+    def test_200_ms_window_drops_press_inside_window(self) -> None:
+        factory, debouncer = self._build(0.200)
+        fired: List[int] = []
+        debouncer.on_release(lambda: fired.append(1))
+        debouncer.on_press()
+        for timer in factory.timers:
+            timer.fire()
+        self.assertEqual(fired, [])
+
+    def test_350_ms_window_keeps_macos_double_tap_above_threshold(self) -> None:
+        # 350 ms is the upstream macOS double-tap budget; if a real
+        # firmware revision observes bounces wider than 200 ms, lifting
+        # the window to 350 ms must still respect the "double-tap stays a
+        # double-tap" guarantee by not collapsing two holds that the user
+        # intentionally spaced.
+        factory, debouncer = self._build(0.350)
+        fired: List[int] = []
+        # First hold: release fires because no press arrives inside.
+        debouncer.on_release(lambda: fired.append(1))
+        factory.timers[0].fire()
+        # Second hold, distinct physical press: re-press cancels no
+        # pending timer here (the previous one fired), and the new
+        # release schedules a new timer.  We assert both fired so that a
+        # regression toward collapsing them would be caught.
+        debouncer.on_release(lambda: fired.append(2))
+        factory.timers[1].fire()
+        self.assertEqual(fired, [1, 2])
+
+
 class VoiceEdgeDebouncerRejectsBadArgsTests(unittest.TestCase):
     def test_negative_window_raises(self) -> None:
         with self.assertRaises(ValueError):

@@ -95,7 +95,43 @@ def default_config() -> Dict[str, Any]:
         # Windows WASAPI and MME) - name alone is not always unique.
         "output_endpoint_name": "",
         "output_endpoint_host_api": "",
+        # Voice-edge release debounce window for ADR-0003 Fix B.  Default 200 ms
+        # is the 3x margin over the 65 ms RC003 firmware bounce observed on
+        # 2026-08-23.  Stored value is clamped to [0.050, 0.500] s by
+        # ``_normalize_voice_release_debounce``; out-of-range or invalid
+        # values fall back to the 0.200 default so the debouncer cannot
+        # silently regress.
+        "voice_release_debounce_seconds": 0.200,
     }
+
+
+# Valid range for the voice-edge release debounce window; see ADR-0003
+# "Window refinement 2026-08-23".  Values outside the band fall back to the
+# default so a future firmware revision that needs a wider window only has
+# to lift the bound in one place.
+_VOICE_RELEASE_DEBOUNCE_MIN_SECONDS = 0.050
+_VOICE_RELEASE_DEBOUNCE_MAX_SECONDS = 0.500
+_VOICE_RELEASE_DEBOUNCE_DEFAULT_SECONDS = 0.200
+
+
+def _normalize_voice_release_debounce(config: Dict[str, Any]) -> None:
+    """Clamp ``voice_release_debounce_seconds`` into its valid range.
+
+    A non-numeric, negative, or out-of-range value silently falls back to
+    the 0.200 default.  The intent is that any persistence-side corruption
+    or hand-edited config.json gracefully re-routes through the same safe
+    default the debouncer ships with, never letting the production widget
+    silently regress to a 0 ms or 5 s window.
+    """
+
+    raw = config.get("voice_release_debounce_seconds", _VOICE_RELEASE_DEBOUNCE_DEFAULT_SECONDS)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = _VOICE_RELEASE_DEBOUNCE_DEFAULT_SECONDS
+    if value < _VOICE_RELEASE_DEBOUNCE_MIN_SECONDS or value > _VOICE_RELEASE_DEBOUNCE_MAX_SECONDS:
+        value = _VOICE_RELEASE_DEBOUNCE_DEFAULT_SECONDS
+    config["voice_release_debounce_seconds"] = value
 
 
 def _find_forbidden_key_paths(
@@ -135,6 +171,7 @@ def load_config(path: Path) -> Dict[str, Any]:
         _assert_no_forbidden_keys(stored)
         config.update(stored)
     _normalize_voice_hotkey(config)
+    _normalize_voice_release_debounce(config)
     return config
 
 
@@ -142,6 +179,7 @@ def save_config(path: Path, config: Dict[str, Any]) -> None:
     _assert_no_forbidden_keys(config)
     persisted = dict(config)
     _normalize_voice_hotkey(persisted)
+    _normalize_voice_release_debounce(persisted)
     _save_json_atomic(path, persisted)
 
 

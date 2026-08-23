@@ -116,22 +116,48 @@ sub-millisecond time and never crosses Windows' 200 ms tolerance.
 
 ### Fix B — Debounce the voice-key release edge
 
-On the consumer side (the `_voice_event_worker` thread), defer the
-release-to-host action by `RELEASE_DEBOUNCE_SECONDS = 0.050` (50 ms). If
-a new press edge arrives within that window, treat the release as part
-of the same physical hold and continue the existing host session.
+On the consumer side (the `voice-edge-worker` thread created by Fix A),
+defer the release-to-host action by `VOICE_RELEASE_DEBOUNCE_SECONDS =
+0.200` (200 ms by default). If a new press edge arrives within that
+window, treat the release as part of the same physical hold and continue
+the existing host session.
 
-This fix addresses the Typeless multi-session flicker: a 50 ms hardware
-bounce no longer ends the host session; only a true user release does.
-The macOS upstream uses a larger 150 ms `startDelay`; the local Windows
-implementation needs only the release-side debounce because the press side
-already serializes correctly through `_voice_physical_button_down`.
+The window is configurable via the new top-level config key
+`voice_release_debounce_seconds` (range 0.050 – 0.500 s; values outside
+the range fall back to the default 0.200). The macOS upstream's
+`VoiceFnTapSessionController.startDelay = 0.15 s` is the closest
+analogue, but the local Windows port needs a release-side debounce
+because the press side already serialises correctly through
+`_voice_physical_button_down`.
 
-A constant larger than 50 ms would suppress legitimate quick re-presses
-(some users intentionally tap twice to pause/resume voice input, see
-upstream macOS "双击停用/恢复桥接" feature). 50 ms is the smallest
-window that reliably absorbs the RC003 firmware bounce observed in the
-live log.
+This fix addresses the Typeless multi-session flicker: a sub-200 ms
+hardware bounce no longer ends the host session; only a true user
+release does.
+
+#### Window refinement 2026-08-23
+
+The first issue of this ADR picked 50 ms as the smallest bounce the
+firmware was observed to produce, with the rationale that a wider window
+would suppress legitimate quick re-presses (intentional double-tap to
+pause/resume voice on macOS, see upstream's "双击停用/恢复桥接").
+The 2026-08-23 live `%LOCALAPPDATA%\RemoteMic\RC003\logs\app.log`
+recorded two new bounces of 62 ms (06:13:34,914 → 06:13:34,976) and
+65 ms (06:31:33,421 → 06:31:33,486) — measured between consecutive
+`voice legacy F5 up` and `voice legacy F5 down` log line entries during
+a *single physical hold*. 50 ms would let both leaks through, so the
+production default was raised to 200 ms (≈3× the worst observed
+bounce). The macOS-style double-tap pause window stays available above
+the 200 ms threshold (the real upstream macOS double-tap budget is
+~350 ms, comfortably above 200 ms), so the user-facing gesture is not
+removed — only the previously short bounce window is widened.
+
+The 50 ms / 100 ms / 200 ms / 500 ms boundaries remain covered by
+`tests/test_voice_edge_debouncer.py` plus a new configurable-window
+case; the application default of 200 ms is encoded both in
+`voice_edge_debouncer.VoiceEdgeDebouncer(release_window_seconds=0.200)`
+and in `config.py`'s `voice_release_debounce_seconds` fallback, so a
+later user-facing tooling change cannot silently drift the two values
+apart.
 
 ### Fix C — Drain the playback sink before the host release edge
 
