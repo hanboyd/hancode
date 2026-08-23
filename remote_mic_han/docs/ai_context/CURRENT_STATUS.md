@@ -1,6 +1,6 @@
 # Current Status
 
-- `last_updated`: 2026-08-23T19:26:02+08:00
+- `last_updated`: 2026-08-23T19:47:35+08:00
 - `updated_by`: codex (GPT-5)
 - `git_commit_sha`: a32a345 plus uncommitted ADR-0006 through ADR-0009 implementation
 - `current_phase`: Phase 3 real-device validation, primary Typeless and Qianwen paths usable
@@ -109,6 +109,7 @@
 - Added `打开最新源码设置.cmd`; it resolves only the checked-out source and project virtual environment, refuses an already-open possibly stale settings window, and never loads `dist`, installed or old package code. Source-path verification passed.
 - Passed 196 focused UI/statistics/layout/diagnostics tests after final visual corrections (2 environment skips). The broader discovery invocation remains red only at already-known repository/environment boundaries: package-relative discovery form, two historical ignored binaries plus the administrator HID probe in the public-boundary replay, and its nested lifecycle gate.
 - Accepted ADR-0010 and made in-place installer upgrade a mandatory project invariant: a stable AppId and install root retain one Windows installed-app entry, the running old version is stopped, only the dedicated versioned payload is replaced, and configuration/key mappings/statistics/logs are preserved. Portable ZIPs remain manually replaceable artifacts.
+- Published a privacy-sanitized current snapshot as commit `19a0004` on `origin/codex/remote-mic-public` and opened public Draft PR `hancode#2`. The branch is based directly on current `origin/main`; the eight older unpublished local development commits were deliberately not pushed, preventing their historical one-off probe from entering the public project history. The published snapshot contains 211 files; critical-text, real-MAC and PNG-metadata findings are all zero.
 
 ## In progress
 
@@ -133,3 +134,4 @@
 5. Close any currently open administrator/installed settings window, then use `打开最新源码设置.cmd` for one manual latest-source inspection; confirm the effective preset updates after a successful switch and the displayed RC003 battery agrees with Windows Bluetooth settings.
 6. The unsigned first usable-version artifacts are packaged under `artifacts/`; sign a later release only if a signing identity is available.
 7. On the next real installer update, verify ADR-0010 against the live installation: one installed-app entry, old payload replaced, and config/mappings/statistics/logs preserved.
+8. Continue public GitHub work from `codex/remote-mic-public` / PR #2 or its merged descendant; do not push the current local `main`'s eight unpublished historical commits onto the clean public branch.

@@ -33,6 +33,7 @@ completed:
   - User deferred the shared Typeless/Qianwen foreground-commit issue; no clipboard fallback, forced paste, focus stealing or close-timing change is authorized
   - Accepted ADR-0010: every future installer must upgrade in place without asking the user to uninstall/delete the old version; keep the stable AppId, replace only the dedicated program payload, preserve configuration/key mappings/statistics/logs, and retain one installed-app entry
   - Packaged the first usable unsigned installer and portable ZIP from the current source; final regression passed 1,041 tests with 7 skips, public-boundary scan passed 235 files, fresh portable extraction passed dry-run, and artifact hashes match their sidecars
+  - Published a clean 211-file snapshot as commit 19a0004 on origin/codex/remote-mic-public and opened public Draft PR hancode#2; the branch starts at current origin/main, while the eight older unpublished local commits and their historical one-off probe were intentionally excluded from public history
   - Added repository governance and Git exclusions
   - Measured opening delivery at 2.070 seconds from first AUDIO_STARTED and 2.003 seconds from Windows F5 in the accepted run; WASAPI playback open accounted for the interval and the opening TAP followed in the same millisecond
   - Removed the 60 ms global-hook stall for default arrows/Enter even when direct HID injection is unavailable: RC003 uses the one native Windows edge, custom mappings retain correlation, F5 is swallowed before the wait, and direct HID still uses exact zero-wait armed suppression
@@ -205,5 +206,6 @@ next:
   - Make unsupported back/volume state explicit in the product (deferred, not a regression)
   - Run uninstall/residue checks only with explicit authorization
   - For every packaged update, verify the installer replaces the old program payload while preserving config/key mappings/statistics/logs and leaving one installed-app entry; portable ZIPs are outside this contract
+  - Continue public work from codex/remote-mic-public / PR #2 or its merged descendant; never push the current local main's eight unpublished historical commits onto that clean public line
 first_command_for_next_agent: git status --short --untracked-files=all -- .
 ```
