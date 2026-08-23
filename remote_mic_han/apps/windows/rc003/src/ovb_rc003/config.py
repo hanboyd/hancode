@@ -204,6 +204,20 @@ def _normalize_voice_hotkey(config: Dict[str, Any]) -> None:
         )
         return
 
+    # ``lctrl+lalt`` is the shipped built-in for the TOGGLE mode and is
+    # also the hotkey Typeless listens on, but it is a legitimate user
+    # choice in HOLD mode too: when the user has explicitly selected it,
+    # leave it alone regardless of the recorded ``voice_trigger_mode``.
+    # Without this early return the legacy fallback below would silently
+    # rewrite ``lctrl+lalt`` to HOLD's built-in ``ralt`` (single-key),
+    # which then steers the LL-hook transform path to physically emit one
+    # right-Alt edge instead of letting ``VoiceController`` TAP the dual
+    # key combo - silently breaking Typeless (and any other tool that
+    # listens on the same chord).  See the live-log evidence captured in
+    # ``CURRENT_STATUS.md`` on 2026-08-23.
+    if current == "lctrl+lalt":
+        return
+
     try:
         mode = key_mapping.VoiceTriggerMode(config.get("voice_trigger_mode"))
     except ValueError:

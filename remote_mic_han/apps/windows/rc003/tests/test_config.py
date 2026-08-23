@@ -163,6 +163,111 @@ class VoiceReleaseDebounceConfigTests(unittest.TestCase):
         self.assertAlmostEqual(loaded["voice_release_debounce_seconds"], 0.350)
 
 
+class VoiceHotkeyNormalizeTests(unittest.TestCase):
+    """Regression test for the 2026-08-23 Typeless defect.
+
+    ``config._normalize_voice_hotkey`` used to silently rewrite a user-
+    selected ``voice_hotkey='lctrl+lalt'`` to HOLD mode's built-in
+    ``'ralt'`` whenever ``voice_trigger_mode='hold'`` was also set on
+    disk.  That meant:
+
+    * the LL-hook F5 transform path was enabled (it requires HOLD mode
+      AND a single-key built-in shortcut),
+    * ``_handle_mic_button_pressed`` therefore entered the
+      ``host_action_handled=True`` branch and skipped
+      ``_apply_voice_action``,
+    * ``VoiceController`` never fired its hotkey,
+    * and the foreground application (Typeless, which listens on
+      ``lctrl+lalt``) saw nothing.
+
+    The fix lets the normalizer respect the user's explicit
+    ``lctrl+lalt`` choice in every mode, while the historic Ctrl+Win
+    migration and the ``lalt``-as-``ralt`` repair still run.
+    """
+
+    def test_hold_mode_plus_lctrl_lalt_hotkey_is_preserved(self):
+        data = {
+            "voice_trigger_mode": "hold",
+            "voice_hotkey": "lctrl+lalt",
+        }
+        config._normalize_voice_hotkey(data)
+        self.assertEqual(data["voice_hotkey"], "lctrl+lalt")
+        self.assertEqual(data["voice_trigger_mode"], "hold")
+
+    def test_toggle_mode_plus_lctrl_lalt_hotkey_is_preserved(self):
+        data = {
+            "voice_trigger_mode": "toggle",
+            "voice_hotkey": "lctrl+lalt",
+        }
+        config._normalize_voice_hotkey(data)
+        self.assertEqual(data["voice_hotkey"], "lctrl+lalt")
+        self.assertEqual(data["voice_trigger_mode"], "toggle")
+
+    def test_load_round_trips_hold_lctrl_lalt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(
+                json.dumps(
+                    {"voice_trigger_mode": "hold", "voice_hotkey": "lctrl+lalt"}
+                ),
+                encoding="utf-8",
+            )
+            loaded = config.load_config(path)
+        self.assertEqual(loaded["voice_hotkey"], "lctrl+lalt")
+        self.assertEqual(loaded["voice_trigger_mode"], "hold")
+
+    def test_save_round_trips_hold_lctrl_lalt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            data = config.default_config()
+            data["voice_trigger_mode"] = "hold"
+            data["voice_hotkey"] = "lctrl+lalt"
+            config.save_config(path, data)
+            loaded = config.load_config(path)
+        self.assertEqual(loaded["voice_hotkey"], "lctrl+lalt")
+        self.assertEqual(loaded["voice_trigger_mode"], "hold")
+
+    def test_hold_mode_plus_user_custom_hotkey_is_preserved(self):
+        # ``lctrl+lalt`` is the shipped built-in the fix protects; an
+        # arbitrary user shortcut (``win+h`` is the canonical example used
+        # elsewhere in this file) must also survive normalize untouched.
+        data = {
+            "voice_trigger_mode": "hold",
+            "voice_hotkey": "win+h",
+        }
+        config._normalize_voice_hotkey(data)
+        self.assertEqual(data["voice_hotkey"], "win+h")
+
+    def test_hold_lctrl_win_still_migrates_to_ralt(self):
+        # The historic Ctrl+Win migration must NOT be broken by the fix.
+        data = {
+            "voice_trigger_mode": "hold",
+            "voice_hotkey": "lctrl+win",
+        }
+        config._normalize_voice_hotkey(data)
+        self.assertEqual(data["voice_hotkey"], "ralt")
+        self.assertEqual(data["voice_trigger_mode"], "hold")
+
+    def test_hold_lctrl_lwin_still_migrates_to_ralt(self):
+        data = {
+            "voice_trigger_mode": "hold",
+            "voice_hotkey": "lctrl+lwin",
+        }
+        config._normalize_voice_hotkey(data)
+        self.assertEqual(data["voice_hotkey"], "ralt")
+        self.assertEqual(data["voice_trigger_mode"], "hold")
+
+    def test_hold_lalt_still_repairs_to_ralt(self):
+        # ``lalt`` is documented as an invalid recording of the RC003 F5
+        # leak that should be repaired only when in HOLD mode.
+        data = {
+            "voice_trigger_mode": "hold",
+            "voice_hotkey": "lalt",
+        }
+        config._normalize_voice_hotkey(data)
+        self.assertEqual(data["voice_hotkey"], "ralt")
+
+
 class SaveConfigPrivacyGuardTests(unittest.TestCase):
     def test_save_config_rejects_forbidden_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
