@@ -1205,11 +1205,31 @@ class RC003App:
                     self._close_voice_host_session()
 
     def _close_voice_host_session(self) -> None:
-        """Deliver the closing host edge while preserving retry ownership."""
+        """Deliver the closing host edge while preserving retry ownership.
+
+        The closing edge is always a complete key-pair TAP (down + hold
+        window + up), not a bare KEY_UP.  The host application that
+        consumes the voice shortcut is always a toggle-style target
+        (Typeless / 千问 voice mode / the macOS-style double-tap window)
+        and never wants a sustained key-down; a lone KEY_UP would leave
+        the host toggle in an indeterminate half-state.  Press and
+        release both emit TAP so the toggle cycles once per physical
+        press/release pair - see ``docs/decisions/ADR-0004-voice-press-
+        release-tap.md``.
+
+        ``voice_controller.on_audio_stopped()`` is still called so the
+        internal HOLD latch and the TOGGLE-mode closing state advance
+        as before; the returned action is ignored for delivery purposes
+        but reused by the ``restore_pending`` retry branch below so a
+        failed delivery still records the controller's intended closing
+        shape.
+        """
 
         action = self._voice.on_audio_stopped()
         transformed_session = self._voice_legacy_transform_session
-        action_applied = True if action is None else self._apply_voice_action(action)
+        action_applied = self._apply_voice_action(
+            voice_controller.VoiceHostAction.TAP
+        )
         if transformed_session:
             self._voice_legacy_transform_session = False
         if action is not None and not action_applied:
@@ -1253,11 +1273,19 @@ class RC003App:
             )
             return
 
-        action = self._voice.on_mic_button_pressed()
+        self._voice.on_mic_button_pressed()
+        # Emit a complete key-pair TAP rather than voice_controller's
+        # HOLD-mode KEY_DOWN.  The host application that consumes the
+        # voice shortcut is always a toggle-style target (Typeless /
+        # 千问 voice mode / the macOS-style double-tap window); a
+        # sustained key-down leaves the host toggle in a half-state.
+        # See ``docs/decisions/ADR-0004-voice-press-release-tap.md``.
         action_delivered = (
             True
             if host_action_handled
-            else self._apply_voice_action(action)
+            else self._apply_voice_action(
+                voice_controller.VoiceHostAction.TAP
+            )
         )
         if host_action_handled:
             self._logger.info(
