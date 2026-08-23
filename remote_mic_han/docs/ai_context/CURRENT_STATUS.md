@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-22T17:49:11+08:00
-- `updated_by`: Codex/GPT
-- `git_commit_sha`: uncommitted initial framework
-- `current_phase`: Phase 3 real-device validation and Windows HID boundary
+- `last_updated`: 2026-08-23T10:30:00+08:00
+- `updated_by`: minimax-m3 (opencode)
+- `git_commit_sha`: f3db758 (ADR-0003 revision on top of 2906b38 baseline)
+- `current_phase`: Phase 3 real-device validation, awaiting hardware acceptance
 - `hardware_available`: true
 
 ## Completed
@@ -31,6 +31,10 @@
 - Recorded candidate paths, byte sizes, hashes, included notices, and deferred boundaries in `docs/baseline/CANDIDATE-ARTIFACTS.md`.
 - Installed the earlier unsigned candidate through its real Inno Setup UI and verified the installed settings shortcut and normal launch.
 - Reproduced a duplicate settings-window bug, added a dedicated settings mutex plus best-effort foreground activation, and verified repeated launches leave one window.
+- Imported the entire `remote_mic_han/` tree as the monorepo's first clean baseline: commit `2906b38 chore: import remote_mic_han Phase 0/1/2 initial baseline` (195 files, 39 856 insertions; `.gitignore` extended with `/.claude/` and `apps/windows/rc003/.gitignore`'s `artifacts/`).
+- Implemented ADR-0003 Fix A in `src/ovb_rc003/app.py`: a lock-free `queue.Queue` plus a dedicated `voice-edge-worker` thread now consume the LL-hook edges; `_on_legacy_key_event` only updates atomic flags and `put_nowait`s the event so the WH_KEYBOARD_LL callback never crosses Windows' ~200 ms tolerance.
+- Wired ADR-0003 Fix B (release-side debounce) into the new worker via `_dispatch_voice_mic_edge`, and widened the debounce default to 200 ms with a new `voice_release_debounce_seconds` config key (range 0.050–0.500 s, out-of-range and non-numeric values fall back to the 0.200 default); commit `f3db758 feat(adr-0003): widen voice release debounce to 200 ms and make it configurable`.
+- Pinned the new default through three independent surfaces (`voice_edge_debouncer.VoiceEdgeDebouncer(release_window_seconds=0.200)`, the application read of `voice_release_debounce_seconds`, and `_normalize_voice_release_debounce`'s fallback) and added 11 unit tests covering config clamping, config round-trip and configurable window boundaries (50/100/200/350 ms).
 - Extracted the Mac product UI language into `opendesign/design-systems/remote-mic-product/` and built a 900×680 Windows-adapted mockup.
 - Independently verified the OpenDesign mockup at 900×680: no page-level scrollbars or clipping, bridge status visible, Windows chrome represented, and Chinese controls at least 12 pt.
 - Reworked the Windows QML to use a narrow side rail, large page titles, layered cards, semantic accent selection, the real RC003 image, and a two-column connection/voice layout.
@@ -66,7 +70,7 @@
 
 ## In progress
 
-- Root-cause analysis for the two pending voice-key acceptance failures is complete. Notepad F5 leak is caused by `_on_legacy_key_event` running on the `WH_KEYBOARD_LL` hook thread and acquiring `_voice_trigger_lock` while ATVV `AudioStarted` opens a fresh PortAudio sink (~486 ms on first press of any bridge run); Windows times the hook out and dispatches the F5 anyway. Typeless multi-session flicker is caused by RC003 firmware bounce during a hold producing real release/press edge pairs that the application treats as distinct sessions. Fix direction is captured in `docs/decisions/ADR-0003-voice-edge-debounce-and-hook-decoupling.md` (decouple hook thread from application locks + 50 ms release debounce). The source bridge is stopped for a clean handover.
+- ADR-0003 Fix A/B/C code is now in `main` at commit `f3db758`; the source bridge has been started and stopped cleanly under the new worker, but no fresh real-device acceptance run has been performed against the new code path yet. Both Notepad F5 and Typeless multi-session remain marked `failed` on hardware until one Notepad long-press confirms no date insertion and one Typeless long-hold confirms exactly one voice window with one complete transcription under commit `f3db758`. The previous holding run (recorded on the bridge before this commit) still satisfies the "one logical F5 trigger, 462 PCM frames, AUDIO_STOP deferred" half but is now stale relative to the new worker. Reconfirmation is required before either entry may move to `passed`.
 
 ## Deferred
 

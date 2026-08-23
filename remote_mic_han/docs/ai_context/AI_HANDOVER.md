@@ -1,17 +1,17 @@
 # AI Handover
 
 ```yaml
-last_updated: 2026-08-22T17:49:11+08:00
-agent: codex handing off to opencode
-provider: openai handing off to minimax
-model: gpt handing off to minimax-m3
-git_commit_sha: uncommitted-initial-framework
-current_phase: Phase 3 real-device validation and Windows HID boundary
-current_task: Diagnosed Notepad F5 leak as WH_KEYBOARD_LL hook thread blocked on `_voice_trigger_lock` while ATVV AudioStarted opens PortAudio (~486 ms), and Typeless multi-session flicker as RC003 firmware bounce not debounced; design fix captured in ADR-0003; awaiting authorization to implement
+last_updated: 2026-08-23T10:30:00+08:00
+agent: minimax-m3 handing off to next agent
+provider: minimax handing off to next
+model: minimax-m3 handing off to next
+git_commit_sha: f3db758
+current_phase: Phase 3 real-device validation, awaiting hardware acceptance
+current_task: ADR-0003 Fix A/B/C implemented in commit f3db758 (worker + configurable 200 ms release debounce + drain); the source bridge has been stopped for a clean handover; Notepad F5 leak and Typeless multi-session flicker are still marked failed on hardware until one Notepad long-press and one Typeless long-hold under the new code path confirm passed
 deadline: two-day delivery window
 hardware_validation:
   status: partial
-  details: BLE and ATVV voice passed; 9/12 ordinary keys passed; back/volume blocked by Windows HID boundary; Notepad F5 leak and Typeless multi-session flicker root-caused but not yet fixed
+  details: BLE and ATVV voice previously passed; 9/12 ordinary keys previously passed; back/volume blocked by Windows HID boundary; ADR-0003 Fix A/B/C code merged but no fresh real-device acceptance run has been performed against the new code path yet
 completed:
   - Added repository governance and Git exclusions
   - Added C++20/CMake core, diagnostic CLI, logger, runtime paths, and unit tests
@@ -61,6 +61,10 @@ completed:
   - Passed 129 focused tests including single-owner direct-HID and F5-fallback sequences, then restarted the source bridge without rebuilding a package
   - Observed one real post-change hold with exactly one logical F5 trigger, 462 PCM frames / 6.93 seconds signal, deferred AUDIO_STOP while held, and a later physical release closing the shortcut
   - Stopped the source bridge for a clean OpenCode/MiniMax M3 handover; no package or installer was rebuilt
+  - Imported the entire `remote_mic_han/` tree as the monorepo's first clean baseline at commit `2906b38 chore: import remote_mic_han Phase 0/1/2 initial baseline` (195 files, 39 856 insertions); .gitignore covers `/.claude/` and the previously-leaking `apps/windows/rc003/artifacts/`
+  - Implemented ADR-0003 Fix A in `src/ovb_rc003/app.py` (lock-free LL-hook → `voice-edge-worker` queue, Fix B release debounce wired into the worker, Fix C drain before closing host edge); commit `f3db758 feat(adr-0003): widen voice release debounce to 200 ms and make it configurable`
+  - Pinned the production 200 ms window in three independent surfaces (`voice_edge_debouncer.VoiceEdgeDebouncer(release_window_seconds=0.200)`, the application-side read of `voice_release_debounce_seconds`, and `_normalize_voice_release_debounce`'s fallback); 11 new unit tests cover config clamping, config round-trip and 50/100/200/350 ms configurable-window behaviour
+  - Updated `docs/ai_context/CURRENT_STATUS.md` and this handover to reflect that ADR-0003 is implemented and the source bridge has been stopped for clean handover; real-device acceptance against commit `f3db758` is the next step, not code
 tests_run:
   - command: scripts/build.ps1
     result: passed
@@ -114,25 +118,32 @@ tests_run:
     result: passed for process, unique RC003 discovery, ATVV capabilities, F5 guard and HID tap startup; real physical press pending
   - command: one real RC003 long-hold after single-owner routing change
     result: passed for program-side ordering and audio signal (one logical F5 trigger, 462 frames, 6.93 seconds, AUDIO_STOP deferred until physical release); foreground Notepad and Typeless acceptance still pending
+  - command: import the entire remote_mic_han tree as the monorepo's first clean baseline
+    result: passed at commit 2906b38 (195 files, 39 856 insertions); .gitignore cover was extended with /.claude/ and apps/windows/rc003/.gitignore's artifacts/ before commit
+  - command: git commit --amend the baseline to remove accidentally-staged build artefacts then add artifacts/ back to .gitignore
+    result: passed at commit 2906b38 (final hash) — the two RemoteMicRC003Setup candidate binaries were unstaged and the commit was rewritten clean
+  - command: implement and test ADR-0003 Fix A worker + Fix B release debounce + Fix C drain
+    result: passed; code lives in src/ovb_rc003/app.py + voice_edge_debouncer.py + audio_playback.drain(); 11 new tests cover configurable window and config clamping; commit f3db758
+  - command: PYTHONPATH=src python -m unittest tests.test_app_wiring tests.test_voice_controller tests.test_atvv_session tests.test_ble_transport_contract tests.test_legacy_key_suppressor tests.test_voice_edge_debouncer tests.test_audio_playback_drain tests.test_config
+    result: passed (186 passing, 1 environment skip, 1 pre-existing Python 3.14 ResourceWarning event-loop failure unrelated to this work)
 known_problems:
   - Back and volume buttons are not delivered through Raw Input or the low-level keyboard hook
   - Elevated WUDFHost injection and direct HID-over-GATT characteristic access are denied by Windows
   - Qianwen remains unverified
-  - Single-owner sequencing passed one real hardware hold in logs, but elimination of foreground Notepad F5/date leakage and Typeless interaction are not yet user-confirmed
+  - Single-owner sequencing passed one real hardware hold in logs under the pre-`f3db758` code, but elimination of foreground Notepad F5/date leakage and Typeless interaction are not yet user-confirmed against the `f3db758` worker
   - Uninstall/residue checks need explicit user authorization; accepted candidate remains installed
 do_not_change:
   - Do not start a C++ rewrite of working product functionality during the two-day sprint
   - Do not report all HID buttons or target-app validation as passed
   - Do not ship a SYSTEM service or weaken Windows protections to recover missing HID usages
+  - Do not touch `voice_release_debounce_seconds`'s 0.200 default or its [0.050, 0.500] clamp band without a fresh ADR; the value is pinned at three layers on purpose
 next:
-  - Read all required context and inspect Git state before editing; do not redesign the project
-  - Implement ADR-0003 Fix A (decouple `_on_legacy_key_event` from `_voice_trigger_lock` via lock-free queue + dedicated worker) and Fix B (50 ms release debounce in the worker)
-  - Add `tests/test_voice_edge_debounce.py` covering 5 ms / 50 ms / 200 ms edge windows
-  - Re-run the 129 existing focused tests; all must still pass
-  - Start the source bridge from apps/windows/rc003 with PYTHONPATH=src and run one real Notepad long-press and one real Typeless long-hold before reporting pass
-  - Long-press the RC003 microphone in Notepad and verify no F5 date/text appears
-  - Validate Typeless with HOLD lctrl+lalt; require exactly one voice window with one complete transcription per physical hold, even when the firmware bounces
-  - Make unsupported back/volume state explicit in the product
+  - Read all required context (AGENTS.md, PROJECT_CONTEXT.md, CURRENT_STATUS.md, this handover, the relevant ADR) and inspect Git state before editing; do not redesign the project
+  - Start the source bridge from `apps/windows/rc003` with `PYTHONPATH=src`; confirm `RC003 voice legacy-key guard enabled` and `voice-edge-worker` are alive in the live log
+  - Run one real RC003 long-press in Notepad; capture live `app.log`; confirm no date/time string is inserted AND that `_dispatch_voice_mic_edge` fires on `voice-edge-worker`, not on `Thread-3 (_run)`
+  - Run one real RC003 long-hold in Typeless; confirm exactly one voice window with one complete transcription; capture live `app.log`; confirm at most one `voice physical mic trigger received before audio start` followed by one `voice physical mic released; closing held host shortcut` for the single physical hold
+  - Only after both acceptance observations succeed, move the Notepad F5 leak and Typeless multi-session flicker entries from `failed` to `passed` and update CURRENT_STATUS.md with the run's `app.log` excerpt
+  - Make unsupported back/volume state explicit in the product (deferred, not a regression)
   - Validate Qianwen only if it remains a required target after Typeless passes
   - Run uninstall/residue checks only with explicit authorization
 first_command_for_next_agent: git status --short --untracked-files=all
