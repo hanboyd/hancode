@@ -1,5 +1,60 @@
 # Changelog — Remote Mic RC003 (Windows)
 
+## [Unreleased]
+
+### Phase 2 / Area 1 — ATVV capability parse（C++ 迁移）
+
+完成 Phase 2 第 1 区（[ADR-0012](decisions/ADR-0012-atvv-adpcm-phase2-boundary.md)
+第 3 节的 `remotemic::atvv::Capabilities`）。Python 基线
+`ovb_rc003.atvv_protocol.ATVVCapabilities.parse` 与 C++ 实现
+`remotemic::atvv::parse` 字节级一致。**Phase 2 全部 4 区尚未完成，版本号
+不升**；下次小版本号 `0.3.0-candidate` 留给 Phase 2 closeout。
+
+门禁（ADR-0012 §8）：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| G1 | `ctest -C Debug   -R '^remotemic_atvv_tests\$'`       | 1/1 通过 |
+| G2 | `ctest -C Release -R '^remotemic_atvv_tests\$'`       | 1/1 通过 |
+| G3 | `ctest -C Debug   -R '^remotemic_atvv_bind_smoke\$'`  | 1/1 通过 |
+| G3 | `ctest -C Release -R '^remotemic_atvv_bind_smoke\$'`  | 1/1 通过 |
+| G5 | `REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL=shadow pytest tests/test_atvv_native_parity.py -q` | 2/2 通过，8 个夹具全部 byte-exact |
+
+未跑 / 留待 Phase 2 全量完成：
+
+- G4（Python 全量 ATVV 单元测试 100% 通过）— 已在 Phase 1 末尾
+  验证（29 个测试 OK），Phase 2 期间未改动 Python 基线。
+- G6（冻构建 --dry-run）— Phase 2 期间未重新打包；Phase 2 closeout
+  前一次性跑。
+
+新增内容：
+
+- `include/remotemic/atvv/capabilities.hpp` — `remotemic::atvv::Capabilities`
+  值类型 + `parse(std::span<const u8>) noexcept -> std::optional<Capabilities>`。
+- `src/atvv/capabilities.cpp` — 与 Python 基线逐字节匹配的解析器。
+- `tests/unit/test_atvv_capabilities.cpp` — CTest 单元测试，
+  从同一套 JSON 夹具读 hex 与期望值。
+- `tests/bind/test_atvv_bind_smoke.py` — pybind11 绑定烟雾测试。
+- `tests/test_atvv_native_parity.py` — 运行时 shadow parity 测试
+  （Python 与 C++ 字段全部 byte-exact，0 容差）。
+- `apps/windows/rc003/src/ovb_rc003/atvv_native_bridge.py` —
+  `python` / `native` / `shadow` 三态切换的薄包装；
+  通过 `REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL` 环境变量控制。
+- `apps/windows/rc003/tests/fixtures/atvv/` 新增 7 个 synthetic
+  JSON 夹具：`synthetic-v1-8k-fallback.json` /
+  `synthetic-v1-zero-frame-size.json` /
+  `synthetic-v1-zero-codecs-quirk.json` /
+  `synthetic-legacy-pre-1.0.json` /
+  `synthetic-legacy-rejects-short.json` /
+  `synthetic-wrong-opcode.json` /
+  `synthetic-short-payload.json`。所有夹具 100% synthetic，
+  无任何捕获的真实设备或语音数据。
+
+行为变化：**无**。默认实现仍是 Python；只有 `native` 或 `shadow`
+显式选择才会调用 C++ 路径。
+
+---
+
 ## [0.2.0-candidate] — 2026-08-29 — Phase 1 complete
 
 里程碑：9 阶段路线图第 1 阶段（C++/CPython 绑定骨架）完成且通过 exit review。
