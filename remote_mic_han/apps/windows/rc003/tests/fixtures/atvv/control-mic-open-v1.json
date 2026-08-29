@@ -1,0 +1,8 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "control_encode",
+  "description": "Host -> device mic_open command, v1 protocol (version >= 0x0100)",
+  "function": "mic_open_command",
+  "input": { "version": 256 },
+  "expected_hex": "0c00"
+}

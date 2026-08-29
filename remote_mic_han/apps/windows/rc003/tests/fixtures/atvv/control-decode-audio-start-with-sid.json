@@ -1,0 +1,9 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "control_decode",
+  "description": "Device -> host AUDIO_START with session_id at payload[3] (0xff).",
+  "function": "parse_control_message",
+  "input_hex": "0401ff",
+  "expected_opcode": "AudioStart",
+  "expected_session_id": 255
+}
