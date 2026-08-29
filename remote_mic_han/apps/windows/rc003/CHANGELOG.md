@@ -53,6 +53,68 @@
 行为变化：**无**。默认实现仍是 Python；只有 `native` 或 `shadow`
 显式选择才会调用 C++ 路径。
 
+### Phase 2 / Area 2 — ATVV control message 编解码（C++ 迁移）
+
+完成 Phase 2 第 2 区（[ADR-0012](decisions/ADR-0012-atvv-adpcm-phase2-boundary.md)
+第 3 节的 `remotemic::atvv::ControlMessage` 与 `mic_open_command` /
+`mic_close_command`）。Python 基线
+`ovb_rc003.atvv_protocol.parse_control_payload` /
+`mic_open_command` / `mic_close_command` 与 C++ 实现
+`remotemic::atvv::parse_control_message` /
+`remotemic::atvv::mic_open_command` /
+`remotemic::atvv::mic_close_command` 字节级一致。**Phase 2 全部 4 区
+尚未完成，版本号不升**；下次小版本号 `0.3.0-candidate` 留给 Phase 2
+closeout。
+
+门禁（ADR-0012 §8）：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| G1 | `ctest -C Debug   -R '^remotemic_atvv_control_tests\$'`          | 1/1 通过 |
+| G2 | `ctest -C Release -R '^remotemic_atvv_control_tests\$'`          | 1/1 通过 |
+| G3 | `ctest -C Debug   -R '^remotemic_atvv_control_bind_smoke\$'`     | 1/1 通过（12/12 子测试） |
+| G3 | `ctest -C Release -R '^remotemic_atvv_control_bind_smoke\$'`     | 1/1 通过（12/12 子测试） |
+| G5 | `REMOTEMIC_NATIVE_CHOICE_ATVV_CONTROL_PARSE=shadow REMOTEMIC_NATIVE_CHOICE_ATVV_CONTROL_ENCODE=shadow python -m unittest -p test_atvv_native_parity_control.py` | 4/4 通过，12 个夹具全部 byte-exact |
+| G5 | `python -m unittest -p test_atvv_native_parity.py` （Area 1 回归） | 2/2 通过 |
+
+新增内容：
+
+- `include/remotemic/atvv/control.hpp` — `Opcode` 枚举、
+  `ControlMessage = std::variant<CapsPayload, MicButtonPayload,
+  AudioStartPayload, AudioStopPayload, AudioSyncPayload, UnknownPayload>`、
+  `parse_control_message(std::span<const std::uint8_t>) noexcept ->
+  std::optional<ControlMessage>`、`mic_open_command` /
+  `mic_close_command` host→device 编码器。
+- `src/atvv/control.cpp` — 与 Python 基线逐字节匹配的解析与编码。
+  未知 opcode 包成 `UnknownPayload`（保留原始字节），长度 < 7 的
+  `AUDIO_SYNC` 也走 `UnknownPayload`（保持 state machine 看到一致
+  的 `ControlMessage`，由它决定是否丢弃）。
+- `tests/unit/test_atvv_control.cpp` — CTest 单元测试，从同一套
+  JSON 夹具读 12 个子测试（4 encode + 8 decode）。
+- `tests/bind/test_atvv_control_bind_smoke.py` — pybind11 绑定
+  烟雾测试。`std::variant` 在 pybind11 边界上转为 dict（`opcode`
+  + per-opcode 字段），键集与 C++ 单元测试一致以便对照。
+- `tests/test_atvv_native_parity_control.py` — 运行时 shadow parity
+  测试（Python 与 C++ 全部 byte-exact，0 容差）。
+- `apps/windows/rc003/src/ovb_rc003/atvv_protocol.py`：
+  新增 `parse_control_payload(data) -> Optional[dict]`，与 C++
+  返回的 dict 形状逐键对齐，shadow 比对无需 translation 层。
+- `apps/windows/rc003/src/ovb_rc003/atvv_native_bridge.py`：
+  新增 `parse_control` / `mic_open_command` / `mic_close_command`
+  三态切换包装（独立 switch 名 `atvv_control_parse` /
+  `atvv_control_encode`，允许 Phase 2 closeout 之后单独打开）。
+- `apps/windows/rc003/src/ovb_rc003/_remotemic_native_runtime.py`：
+  `atvv_control_parse` / `atvv_control_encode` 注册到默认策略表
+  （默认 `python`），env 变量名拼写错误时立刻失败而非静默回落。
+- `apps/windows/rc003/tests/fixtures/atvv/` 新增 12 个 synthetic
+  JSON 夹具（4 encode + 8 decode），并修正 `control-decode-audio-
+  start-with-sid.json` 与 `control-decode-audio-sync.json` 的 input
+  长度（之前描述与实际字节数对不上，已按描述补足字节）。所有夹具
+  100% synthetic，无任何捕获的真实设备或语音数据。
+
+行为变化：**无**。默认实现仍是 Python；只有 `native` 或 `shadow`
+显式选择才会调用 C++ 路径。
+
 ---
 
 ## [0.2.0-candidate] — 2026-08-29 — Phase 1 complete
