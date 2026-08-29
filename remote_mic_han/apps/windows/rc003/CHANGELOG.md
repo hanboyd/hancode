@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Phase 3 — VoiceController / ATVV 会话边界 + 释放消抖 + AUDIO_STOP 回退（C++ 迁移）
+
+（待开始。范围：`apps/windows/rc003/src/ovb_rc003/atvv_session.py` 中
+的 VoiceController 状态机 / ATVV 会话边界 / 释放消抖（已落地的
+ADR-0003 Fix A/B/C）/ AUDIO_STOP 回退 / 关闭重试所有权；时间必须
+可注入；保留 Python/native 回退与单一会话 owner。不动 Phase 4 音频、
+Phase 5 Windows 输入、Phase 6 BLE。）
+
+---
+
+## [0.3.0-candidate] — 2026-08-30 — Phase 2 complete (4 areas)
+
+里程碑：9 阶段路线图第 2 阶段（C++/CPython 迁移 4 区全部完成且通过
+exit review 与 provenance 核验）。版本号按
+`memory/cpp-migration-version-policy.md` Rule 2 bump
+`0.2.0-candidate → 0.3.0-candidate`，同步 `CMakeLists.txt` 的
+`project(VERSION ...)`、`apps/windows/rc003/src/ovb_rc003/__init__.py`
+的 `__version__`、`apps/windows/rc003/pyproject.toml` 的 `version`。
+`installer/RemoteMicRC003Setup.iss` 的 `AppVersion` 故意不动
+（per Rule 1 — packaging 留给 phase 8）。
+
+详见各 area 小节 + Phase 2 closeout corrective（commit `5ce9bd5`）。
+
 ### Phase 2 / Area 4 — ADPCM DC 高通 + 平滑增益 + `FrameAccumulator`（C++ 迁移）
 
 完成 Phase 2 第 4 区（[ADR-0012](../../docs/decisions/ADR-0012-atvv-adpcm-phase2-boundary.md)
