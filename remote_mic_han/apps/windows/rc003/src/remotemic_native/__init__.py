@@ -17,6 +17,8 @@ try:
         ErrorCode,
         VersionInfo,
         Counter,
+        AtvvCapabilities,
+        atvv_capabilities_parse,
         probe_value_type,
         probe_shared_ptr,
         probe_callback,
@@ -34,10 +36,12 @@ except ImportError:
     ErrorCode = None  # type: ignore[assignment,misc]
     VersionInfo = None  # type: ignore[assignment,misc]
     Counter = None  # type: ignore[assignment,misc]
+    AtvvCapabilities = None  # type: ignore[assignment,misc]
     probe_value_type = None  # type: ignore[assignment,misc]
     probe_shared_ptr = None  # type: ignore[assignment,misc]
     probe_callback = None  # type: ignore[assignment,misc]
     probe_throw = None  # type: ignore[assignment,misc]
+    atvv_capabilities_parse = None  # type: ignore[assignment,misc]
 
 
 # ``CounterSink`` is the C++ typedef used by ``probe_callback``'s argument
@@ -51,6 +55,8 @@ __all__ = [
     "ErrorCode",
     "VersionInfo",
     "Counter",
+    "AtvvCapabilities",
+    "atvv_capabilities_parse",
     "probe_value_type",
     "probe_shared_ptr",
     "probe_callback",

@@ -4,6 +4,7 @@
 
 #include "remotemic/bind/errors.hpp"
 #include "remotemic/bind/probe_types.hpp"
+#include "remotemic/atvv/capabilities.hpp"
 
 namespace py = pybind11;
 using namespace remotemic;
@@ -124,4 +125,38 @@ PYBIND11_MODULE(_C, m) {
         .value("NotFound", ErrorCode::NotFound)
         .value("Timeout", ErrorCode::Timeout)
         .value("Internal", ErrorCode::Internal);
+
+    // ------------------------------------------------------------------
+    // 5. ATVV capability parse (Phase 2 / Area 1, ADR-0012)
+    //    Pure-compute, no I/O, no thread, no global state. Returns
+    //    std::nullopt on malformed input -> None on the Python side.
+    //    Field set mirrors the Python ATVVCapabilities dataclass
+    //    (apps/windows/rc003/src/ovb_rc003/atvv_protocol.py:64-71)
+    //    byte-for-byte so the runtime shadow parity test can compare
+    //    the two implementations without tolerance.
+    // ------------------------------------------------------------------
+    py::class_<atvv::Capabilities>(m, "AtvvCapabilities")
+        .def_readonly("version",        &atvv::Capabilities::version)
+        .def_readonly("codecs",         &atvv::Capabilities::codecs)
+        .def_readonly("interaction",    &atvv::Capabilities::interaction)
+        .def_readonly("frame_size",     &atvv::Capabilities::frame_size)
+        .def_readonly("selected_codec", &atvv::Capabilities::selected_codec)
+        .def_readonly("sample_rate",    &atvv::Capabilities::sample_rate);
+
+    m.def(
+        "atvv_capabilities_parse",
+        [](py::bytes data) -> std::optional<atvv::Capabilities> {
+            const std::string_view view = data;
+            std::span<const std::uint8_t> bytes(
+                reinterpret_cast<const std::uint8_t*>(view.data()),
+                view.size());
+            return atvv::parse(bytes);
+        },
+        py::arg("data"),
+        "Parse an ATVV capability notification payload (opcode 0x0B).\n"
+        "Returns None on malformed input (too short, wrong opcode, or\n"
+        "legacy version with insufficient length). Otherwise returns an\n"
+        "AtvvCapabilities value type matching the Python baseline\n"
+        "ATVVCapabilities dataclass byte-for-byte."
+    );
 }

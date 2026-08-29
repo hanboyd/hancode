@@ -153,6 +153,23 @@ if(REMOTEMIC_BUILD_TESTS)
         set_tests_properties(remotemic_bind_smoke PROPERTIES
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
+
+        # Phase 2 / Area 1 step 4: ATVV binding smoke (G3 of ADR-0012).
+        # Loads the bundled .pyd, calls atvv_capabilities_parse against
+        # one valid + one reject JSON fixture, and asserts the return
+        # shape matches the C++ unit test. Validation gate G3 of
+        # ADR-0012 - on fail, do not flip the ADR to accepted.
+        add_test(
+            NAME remotemic_atvv_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_atvv_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_atvv_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
     endif()
 endif()
 
@@ -217,7 +234,7 @@ if(REMOTEMIC_BUILD_PYTHON)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
     )
-    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind pybind11::pybind11)
+    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv pybind11::pybind11)
 
     # Copy the public Python wrapper next to the compiled _C.pyd so the
     # build directory is a drop-in importable package.
