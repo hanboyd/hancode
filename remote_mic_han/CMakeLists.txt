@@ -84,6 +84,9 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(remotemic_adpcm STATIC
     src/adpcm/ima_decoder.cpp
+    src/adpcm/dc_highpass.cpp
+    src/adpcm/postprocess.cpp
+    src/adpcm/frame_accumulator.cpp
 )
 
 target_include_directories(remotemic_adpcm
@@ -199,6 +202,46 @@ if(REMOTEMIC_BUILD_TESTS)
     endif()
     add_test(NAME remotemic_adpcm_ima_tests COMMAND remotemic_adpcm_ima_tests)
     set_tests_properties(remotemic_adpcm_ima_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 2 / Area 4 TDD red state: stubs return {} for any input,
+    # so all 5 dc-*.json + 10 postprocess-*.json + 7 frame-*.json
+    # fixtures FAIL. See ADR-0012 section 3 / section 8 and
+    # tests/unit/test_adpcm_{dc_highpass,postprocess,frame_accumulator}.cpp.
+    add_executable(remotemic_adpcm_dc_tests tests/unit/test_adpcm_dc_highpass.cpp)
+    target_link_libraries(remotemic_adpcm_dc_tests PRIVATE remotemic_adpcm)
+    if(MSVC)
+        target_compile_options(remotemic_adpcm_dc_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_adpcm_dc_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_adpcm_dc_tests COMMAND remotemic_adpcm_dc_tests)
+    set_tests_properties(remotemic_adpcm_dc_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(remotemic_adpcm_postprocess_tests tests/unit/test_adpcm_postprocess.cpp)
+    target_link_libraries(remotemic_adpcm_postprocess_tests PRIVATE remotemic_adpcm)
+    if(MSVC)
+        target_compile_options(remotemic_adpcm_postprocess_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_adpcm_postprocess_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_adpcm_postprocess_tests COMMAND remotemic_adpcm_postprocess_tests)
+    set_tests_properties(remotemic_adpcm_postprocess_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(remotemic_adpcm_frame_tests tests/unit/test_adpcm_frame_accumulator.cpp)
+    target_link_libraries(remotemic_adpcm_frame_tests PRIVATE remotemic_adpcm)
+    if(MSVC)
+        target_compile_options(remotemic_adpcm_frame_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_adpcm_frame_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_adpcm_frame_tests COMMAND remotemic_adpcm_frame_tests)
+    set_tests_properties(remotemic_adpcm_frame_tests PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
