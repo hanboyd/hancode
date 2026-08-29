@@ -25,14 +25,6 @@ import os
 import unittest
 from pathlib import Path
 
-# Required for the helper's shadow branch to run; the default
-# ``implementation_choice`` is ``"python"`` so without this env var
-# the helper just returns the python baseline and the parity test
-# becomes a no-op. The skip branch catches that case.
-os.environ.setdefault(
-    "REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL", "shadow"
-)
-
 _FIXTURE_DIR = (
     Path(__file__).resolve().parent / "fixtures" / "atvv"
 )
@@ -70,6 +62,26 @@ class AtvvCapabilitiesNativeParityTests(unittest.TestCase):
                 "remotemic_native._C not available; shadow parity skipped"
             )
 
+        # Activate shadow mode for the duration of this test class
+        # only. The product default stays "python" (no global env
+        # mutation). Honor an explicit user override (setdefault
+        # semantics) so this test never silently overrides a CI /
+        # production env choice; capture the original state so
+        # ``tearDownClass`` can restore it and the parity test leaves
+        # the unittest process's environment exactly as it found it
+        # (Phase 1's ``test_default_is_python`` asserts the default
+        # is "python" with a clean env, and module-level ``setdefault``
+        # at import time previously broke that contract).
+        cls._atvv_protocol_was_set = (
+            "REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL" in os.environ
+        )
+        cls._atvv_protocol_old = os.environ.get(
+            "REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL"
+        )
+        os.environ.setdefault(
+            "REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL", "shadow"
+        )
+
         from ovb_rc003.atvv_native_bridge import parse_capabilities
 
         # Wrap in staticmethod so unittest's TestCase attribute
@@ -79,6 +91,20 @@ class AtvvCapabilitiesNativeParityTests(unittest.TestCase):
         # ``_shadow(self, payload)`` and the inner ``python_impl`` gets
         # 2 positional args instead of 1.
         cls._parse_capabilities = staticmethod(parse_capabilities)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        # Restore the env to the state we found at setUpClass. Guarded
+        # in case SkipTest fired before the flags were set, even though
+        # CPython skips tearDownClass in that path already.
+        if getattr(cls, "_atvv_protocol_was_set", False):
+            os.environ["REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL"] = (
+                cls._atvv_protocol_old
+            )
+        else:
+            os.environ.pop(
+                "REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL", None
+            )
 
     def test_fixture_python_baseline_matches_expected(self) -> None:
         # Sanity: the Python baseline (the source of truth for the
