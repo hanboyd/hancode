@@ -158,7 +158,14 @@ G1. `cmake --build build/python --config Debug --target remotemic_atvv_tests rem
 G2. 同样 `--config Release` 6 个 area 测试通过。
 G3. `ctest --test-dir build/python -C Release -R '^(remotemic_atvv_bind_smoke|remotemic_atvv_control_bind_smoke|remotemic_adpcm_ima_bind_smoke|remotemic_adpcm_dc_bind_smoke|remotemic_adpcm_postprocess_bind_smoke|remotemic_adpcm_frame_bind_smoke)$'` 6 个 binding smoke 全部通过。
 G4. `pytest tests/test_atvv_protocol.py tests/test_atvv_golden_fixture.py -q`（默认 python 模式）100% 通过。
-G5. `REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL=shadow pytest tests/test_atvv_native_parity.py -q` 100% 通过（运行时 shadow 等价证明；此为 step 5 工作，不属于本次 accepted 提交的依据，但在 step 5 通过前不视 Phase 2 整体 closeout 完成）。
+G5. **运行时 shadow 等价证明（4 区分组）**。每个区都提供独立的 parity pytest / unittest，可单独 shadow：
+
+  - Area 1：`REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL=shadow python -m unittest -p test_atvv_native_parity.py`
+  - Area 2：`REMOTEMIC_NATIVE_CHOICE_ATVV_CONTROL_PARSE=shadow REMOTEMIC_NATIVE_CHOICE_ATVV_CONTROL_ENCODE=shadow python -m unittest -p test_atvv_native_parity_control.py`
+  - Area 3：`REMOTEMIC_NATIVE_CHOICE_ADPCM_IMA_DECODE=shadow python -m unittest -p test_atvv_native_parity_adpcm.py`
+  - Area 4：`REMOTEMIC_NATIVE_CHOICE_ADPCM_DC_HIGHPASS=shadow REMOTEMIC_NATIVE_CHOICE_ADPCM_POSTPROCESS=shadow REMOTEMIC_NATIVE_CHOICE_ADPCM_FRAME_ACCUMULATOR=shadow python -m unittest -p test_atvv_native_parity_area4.py`
+
+  100% 通过（无容差；mismatch 即停，不放宽）。Area 4 step 5（commit `73e9155`）额外覆盖 `reset` 后状态、partial frame 跨调用、以及 `frame_size <= 0` 与 `> 65535` 的公共 API 行为；详见 `apps/windows/rc003/tests/test_atvv_native_parity_area4.py` 头注释。G5 通过前不视 Phase 2 area closeout 完成。
 
 > **Phase 1 historical gate (G6) is removed.** Phase 1 曾经把"PyInstaller frozen `RemoteMicRC003.exe --dry-run` 在 bundled / stripped 两种状态下都通过"列为 Gate 3。该 gate 关心的是 frozen 打包产物，与 Phase 2 纯计算 4 区的 byte-exact / sample-exact 验收**没有直接因果关系**；继续保留它会让 Phase 2 closeout 卡在没有 fixed-version-phase-2 的 frozen 产物上，违背 `cpp-migration-version-policy.md` Rule 1（"在 Phase 2 完成前不做任何 frozen / 安装器 / 便携 ZIP 打包"）。Frozen 打包单独另开 ADR（计划列入 Phase 9 之后），不挂在此处。
 

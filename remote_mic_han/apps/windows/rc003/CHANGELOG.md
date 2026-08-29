@@ -2,6 +2,121 @@
 
 ## [Unreleased]
 
+### Phase 2 / Area 4 — ADPCM DC 高通 + 平滑增益 + `FrameAccumulator`（C++ 迁移）
+
+完成 Phase 2 第 4 区（[ADR-0012](../../docs/decisions/ADR-0012-atvv-adpcm-phase2-boundary.md)
+第 3 节的 `remotemic::adpcm::DcHighPassFilter` / `postprocess` /
+`FrameAccumulator`）。Python 基线
+`ovb_rc003.atvv_protocol.DCHighPassFilter` / `postprocess` /
+`FrameAccumulator` 与 C++ 实现 `remotemic::adpcm::DcHighPassFilter` /
+`postprocess` / `FrameAccumulator` 样本级一致（PCM int16 无容差、
+`FrameAccumulator.emit` 字节无容差）。状态对象在 Python 与
+C++ 之间 byte-equal 重置与 replay 后保持一致。
+
+**Phase 2 全部 4 区已完成；本提交仍不升版本号**（按
+`memory/cpp-migration-version-policy.md` Rule 1/2：单一一次 Phase 2
+closeout commit 之后才一次性 bump `0.2.0-candidate → 0.3.0-candidate`
++ 更新 `installer/RemoteMicRC003Setup.iss` 的 `AppVersion`；状态对象
+shipping 路径不掺入）。
+
+门禁（ADR-0012 §8，全部 6 个 area × Debug + Release + smoke + 4 区
+shadow parity 同时满足）：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| G1 | `ctest -C Debug   -R '^(remotemic_atvv_tests\|remotemic_atvv_control_tests\|remotemic_adpcm_ima_tests\|remotemic_adpcm_dc_tests\|remotemic_adpcm_postprocess_tests\|remotemic_adpcm_frame_tests)\$'` | 6/6 通过 |
+| G2 | 同 `--config Release` | 6/6 通过 |
+| G3 | `ctest -C Release -R '^(remotemic_atvv_bind_smoke\|remotemic_atvv_control_bind_smoke\|remotemic_adpcm_ima_bind_smoke\|remotemic_adpcm_dc_bind_smoke\|remotemic_adpcm_postprocess_bind_smoke\|remotemic_adpcm_frame_bind_smoke)\$'` | 6/6 通过（含 DC / FrameAccumulator 的 `reset()` parity、`pending_size < frame_size <= 65535` invariant、`frame_size <= 0` no-op + `> 65535` 显式 `TypeError` 公共 API 边界） |
+| G5 | `REMOTEMIC_NATIVE_CHOICE_ADPCM_DC_HIGHPASS=shadow REMOTEMIC_NATIVE_CHOICE_ADPCM_POSTPROCESS=shadow REMOTEMIC_NATIVE_CHOICE_ADPCM_FRAME_ACCUMULATOR=shadow python -m unittest -p test_atvv_native_parity_area4.py` | 8/8 通过 |
+| G5 | 顺带回归 G5 1/2/3 区（见下方"未跑 / 留待 / 已回归"小节） | 4 区 16/16 通过 |
+
+`frame_size` 公共 API 合同（[ADR-0012 §3.1](../../docs/decisions/ADR-0012-atvv-adpcm-phase2-boundary.md)，
+本次最终态）：
+
+| 输入 | 行为 |
+|---|---|
+| `<= 0` | binding 层 no-op：`[]` 返回、`pending_size` 不变（与 Python 基线 `if frame_size <= 0: return []` 守卫逐字对应） |
+| `1..65535` | narrow 到 `std::uint16_t`，委托给 C++ core |
+| `> 65535` | 显式 `TypeError`，数据**不入 C++**，**`pending_size` 也不变** |
+
+C++ core `remotemic::adpcm::FrameAccumulator::append(span<const u8>, std::uint16_t)`
+签名**未变**；规范化发生在 `src/bind/bind_module.cpp` 的
+`FrameAccumulator.append` binding lambda 上。`reset()` 合同
+（`pending_.clear()` 在 O(1) 内、保留 `capacity()`；与全新构造实例在
+相同输入/frame_size 下 byte-equal）同时在 C++ 单元测试与 Python
+binding smoke 上 parity 验证。
+
+新增内容：
+
+- `include/remotemic/adpcm/dc_highpass.hpp` / `src/adpcm/dc_highpass.cpp`
+  — `remotemic::adpcm::DcHighPassFilter`（单极 IIR，alpha =
+  `exp(-2π·fc/fs)`；`reset()` 把 `previous_input_` / `previous_output_`
+  清零并把 `initialized_` 翻回 `false`）。
+- `include/remotemic/adpcm/postprocess.hpp` / `src/adpcm/postprocess.cpp`
+  — `remotemic::adpcm::postprocess(span<const i16>, gain_db)`
+  自由函数；3-tap smoothing + 增益 clamp `[-24, +24]` dB + `NaN` /
+  `±inf` 视作 0 + 输出 clamp 到 int16。
+- `include/remotemic/adpcm/frame_accumulator.hpp` /
+  `src/adpcm/frame_accumulator.cpp` — `remotemic::adpcm::FrameAccumulator`
+  值类型，含 `append` / `reset` / `pending_size` 三个公开成员。
+- `tests/unit/test_adpcm_dc_highpass.cpp` — 5 个 gold fixture
+  （`dc-*.json`）+ 3 个 `reset()` parity 子测试，循环 1/1 通过。
+- `tests/unit/test_adpcm_postprocess.cpp` — 10 个 gold fixture
+  （`postprocess-*.json`，含 `NaN` / `+inf` / `-inf` gain_db），循环
+  1/1 通过。
+- `tests/unit/test_adpcm_frame_accumulator.cpp` — 7 个 gold fixture
+  （`frame-*.json`）+ `reset()` carry-over / `frame_size=0` / 边界
+  65535 / invariant `pending_size < frame_size <= 65535` 共 4 类
+  子测试，循环 1/1 通过。
+- `tests/bind/test_adpcm_dc_bind_smoke.py` /
+  `tests/bind/test_adpcm_postprocess_bind_smoke.py` /
+  `tests/bind/test_adpcm_frame_bind_smoke.py` —
+  pybind11 绑定烟雾（去糖后含 `reset()` parity、`pending_size` 不变
+  边界、`<=0/1/>65535` 实际抛/返回）。
+- `tests/test_atvv_native_parity_area4.py` — 运行时 shadow parity
+  测试（G5）：8 个测试覆盖 5 dc + 10 postprocess + 7 frame
+  fixture，外加 `reset_state_parity`（after warmup + no-warmup）、
+  `partial_across_calls`、`no_op_contract_parity`（`<=0` no-op +
+  pending 不变）；strict value-exact（mismatch 即停并报告 fixture +
+  双方输出 + 首差异 index）。
+- `apps/windows/rc003/src/ovb_rc003/atvv_native_bridge.py` —
+  `apply_dc_highpass` / `postprocess_pcm` / `accumulate_frames`
+  三态切换包装（独立 switch 名 `adpcm_dc_highpass` /
+  `adpcm_postprocess` / `adpcm_frame_accumulator`）。
+- `apps/windows/rc003/src/ovb_rc003/_remotemic_native_runtime.py` —
+  三个新 key 注册到默认策略表（默认 `python`）。
+- `apps/windows/rc003/src/bind/bind_module.cpp` —
+  `FrameAccumulator.append` binding 接受 Python `int`，规范化 `<=0`
+  / `>65535` 后再 narrow 到 `std::uint16_t` 委托给 C++ core；C++
+  core 签名不变。`FrameAccumulator.reset()` 在 binding 暴露，
+  文档明确不抛。
+- `apps/windows/rc003/src/remotemic_native/__init__.py` — 新增
+  `apply_dc_highpass` / `postprocess` / `FrameAccumulator` /
+  `DcHighPassFilter` 的 re-export。
+- `apps/windows/rc003/tests/fixtures/atvv/` 新增 22 个 synthetic
+  JSON 夹具（`dc-*.json` ×5、`postprocess-*.json` ×10、
+  `frame-*.json` ×7）。所有夹具 100% synthetic，无任何捕获的
+  真实设备或语音数据。
+
+未跑 / 留待（Phase 2 closeout 之后下一步）：
+
+- G4（`tests/test_atvv_protocol.py` + `tests/test_atvv_golden_fixture.py`
+  默认 python 模式 100% 通过）— 期间 Python 基线**未改动**（按
+  ADR-0012 §3 Non-goals：保持基线 API 形状，迁入只增 C++ 路径）。
+- G6（PyInstaller frozen `--dry-run` / Inno Setup installer / 便携 ZIP
+  / 签名发布）— 在 Phase 2 全部 4 区 closeout commit 完成 + 版本号
+  bump 到 `0.3.0-candidate` 之后，按 `cpp-migration-version-policy.md`
+  Rule 1 单独安排。
+
+ADR-0012 状态：本次提交把状态从 `proposed` → `accepted`，并于
+step 4 corrective（commit `61a3636`）补强 §3.1（`frame_size` 公共 API
+合同表）与 §3.2（area 4 范围重申），step 5（commit `73e9155`）补强
+G5（4 区分组 parity 命令）。
+
+行为变化：**无**。默认实现仍是 Python；只有 `native` 或 `shadow`
+显式选择才会调用 C++ 路径。
+
+### Phase 2 / Area 3 — IMA/DVI ADPCM 解码器（C++ 迁移）
 ### Phase 2 / Area 1 — ATVV capability parse（C++ 迁移）
 
 完成 Phase 2 第 1 区（[ADR-0012](decisions/ADR-0012-atvv-adpcm-phase2-boundary.md)
