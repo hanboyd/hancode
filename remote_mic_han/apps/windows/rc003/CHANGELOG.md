@@ -115,6 +115,67 @@ closeout。
 行为变化：**无**。默认实现仍是 Python；只有 `native` 或 `shadow`
 显式选择才会调用 C++ 路径。
 
+### Phase 2 / Area 3 — IMA/DVI ADPCM 解码器（C++ 迁移）
+
+完成 Phase 2 第 3 区（[ADR-0012](decisions/ADR-0012-atvv-adpcm-phase2-boundary.md)
+第 3 节的 `remotemic::adpcm::ImaDecoder`）。Python 基线
+`ovb_rc003.atvv_protocol.IMAADPCMDecoder` 与 C++ 实现
+`remotemic::adpcm::ImaDecoder` **逐样本一致**（无容差，PCM
+sample-exact）。**Phase 2 全部 4 区尚未完成，版本号不升**；下次小
+版本号 `0.3.0-candidate` 留给 Phase 2 closeout。
+
+门禁（ADR-0012 §8）：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| G1 | `ctest -C Debug   -R '^remotemic_adpcm_ima_tests\$'`        | 1/1 通过（11/11 子测试） |
+| G2 | `ctest -C Release -R '^remotemic_adpcm_ima_tests\$'`        | 1/1 通过（11/11 子测试） |
+| G3 | `ctest -C Debug   -R '^remotemic_adpcm_ima_bind_smoke\$'`   | 1/1 通过 |
+| G3 | `ctest -C Release -R '^remotemic_adpcm_ima_bind_smoke\$'`   | 1/1 通过 |
+| G5 | `REMOTEMIC_NATIVE_CHOICE_ADPCM_IMA_DECODE=shadow python -m unittest -p test_atvv_native_parity_adpcm.py` | 2/2 通过，11 个夹具全部 sample-exact |
+| G5 | `python -m unittest -p test_atvv_native_parity.py` （Area 1 回归） | 2/2 通过 |
+| G5 | `python -m unittest -p test_atvv_native_parity_control.py` （Area 2 回归） | 4/4 通过 |
+
+关键修复：**int16 溢出**。`decode_nibble` 的 `difference` 与
+`predictor_` 累加器在 `step_index` 较大时（典型值 step_table[80]
+= 15289，`step + step/2 + step/4 + step/8` ≈ 28666）会超过 int16
+上限 32767。Python 用无界 int 永远不溢出；C++ 必须先在 int32 空间
+累加并 clamp，再 cast 到 int16。否则 cast 时静默回绕（mod 65536），
+导致预测器半途翻号，sample-exact 立即失败。**同时**，必须先 clamp
+int32 值再 cast —— 直接 `static_cast<int16_t>(next)` 即使后面再
+调 `clamp_predictor` 也没用，因为 cast 后的回绕值已经在 int16
+范围内，clamp 不会触发。
+
+新增内容：
+
+- `include/remotemic/adpcm/ima_decoder.hpp` — `remotemic::adpcm::
+  ImaDecoder` 值类型：`reset(predictor, step_index)`（clamp 到
+  `[-32768, 32767]` / `[0, 88]`），`decode(span<const u8>) ->
+  std::vector<int16_t>`（每字节 2 样本，高 nibble 在前）。
+- `src/adpcm/ima_decoder.cpp` — 与 Python 基线逐样本匹配的解码器
+  （非标准 ATVV bit mapping：bit 0 = step/4，不是更常见的
+  step/8，因为上游 Xiaomi Mi Box 设备实际就是这个 flavor）。
+- `tests/unit/test_adpcm_ima.cpp` — CTest 单元测试，从同一套
+  JSON 夹具读 11 个子测试。
+- `tests/bind/test_adpcm_ima_bind_smoke.py` — pybind11 绑定烟雾
+  测试。
+- `tests/test_atvv_native_parity_adpcm.py` — 运行时 shadow parity
+  测试。
+- `apps/windows/rc003/src/ovb_rc003/atvv_native_bridge.py`：新增
+  `decode_adpcm_frame(data, predictor=0, step_index=0) -> list[int]`
+  三态切换包装（独立 switch 名 `adpcm_ima_decode`）。
+- `apps/windows/rc003/src/ovb_rc003/_remotemic_native_runtime.py`：
+  `adpcm_ima_decode` 注册到默认策略表（默认 `python`）。
+- `apps/windows/rc003/src/remotemic_native/__init__.py`：
+  re-export `ImaDecoder`。
+- `apps/windows/rc003/tests/fixtures/atvv/` 新增 11 个 synthetic
+  JSON 夹具（`adpcm-*.json`）+ 1 个 build-time-only 生成器脚本
+  `_gen_adpcm_fixtures.py`（不在 unittest 发现范围内）。所有夹具
+  100% synthetic，无任何捕获的真实设备或语音数据。
+
+行为变化：**无**。默认实现仍是 Python；只有 `native` 或 `shadow`
+显式选择才会调用 C++ 路径。
+
 ---
 
 ## [0.2.0-candidate] — 2026-08-29 — Phase 1 complete
