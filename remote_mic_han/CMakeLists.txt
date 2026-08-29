@@ -310,6 +310,48 @@ if(REMOTEMIC_BUILD_TESTS)
         set_tests_properties(remotemic_adpcm_ima_bind_smoke PROPERTIES
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
+
+        # Phase 2 / Area 4 step 4: DC + postprocess + FrameAccumulator
+        # binding smokes (G3 of ADR-0012). Each loads the bundled .pyd,
+        # creates a fresh instance / calls the free function per
+        # fixture, and asserts the returned values match the C++ unit
+        # tests (remotemic_adpcm_dc_tests / _postprocess_tests /
+        # _frame_tests). On fail, do not flip the ADR to accepted.
+        add_test(
+            NAME remotemic_adpcm_dc_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_adpcm_dc_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_adpcm_dc_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
+
+        add_test(
+            NAME remotemic_adpcm_postprocess_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_adpcm_postprocess_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_adpcm_postprocess_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
+
+        add_test(
+            NAME remotemic_adpcm_frame_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_adpcm_frame_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_adpcm_frame_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
     endif()
 endif()
 

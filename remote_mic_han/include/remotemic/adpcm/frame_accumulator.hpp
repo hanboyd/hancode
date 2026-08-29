@@ -42,9 +42,23 @@ public:
         std::span<const std::uint8_t> data,
         std::uint16_t frame_size);
 
+    // Discard any pending bytes accumulated from previous calls.
+    // After reset(), the next append() behaves identically to a
+    // freshly constructed instance: it does NOT carry over any
+    // partial frame from the previous stream. The pending byte count
+    // is 0 immediately after reset(). This is the protocol-level
+    // "new stream" boundary; it does NOT touch the caller's input
+    // span and never throws.
+    void reset() noexcept;
+
     // Read-only accessor for the current pending byte count. Useful
     // for diagnostics and parity tests that need to confirm the
     // accumulator correctly retains remainders across calls.
+    //
+    // Invariant (per ADR-0012 Phase 2 / Area 4 step 4):
+    //   0 <= pending_size_ < frame_size  for the value of frame_size
+    //   used in the most recent append() call with frame_size > 0.
+    //   For frame_size == 0 the invariant is trivially 0.
     std::size_t pending_size() const noexcept;
 
 private:

@@ -19,10 +19,13 @@ try:
         Counter,
         AtvvCapabilities,
         ImaDecoder,
+        DcHighPassFilter,
+        FrameAccumulator,
         atvv_capabilities_parse,
         atvv_control_parse,
         atvv_mic_open_command,
         atvv_mic_close_command,
+        postprocess,
         probe_value_type,
         probe_shared_ptr,
         probe_callback,
@@ -42,6 +45,8 @@ except ImportError:
     Counter = None  # type: ignore[assignment,misc]
     AtvvCapabilities = None  # type: ignore[assignment,misc]
     ImaDecoder = None  # type: ignore[assignment,misc]
+    DcHighPassFilter = None  # type: ignore[assignment,misc]
+    FrameAccumulator = None  # type: ignore[assignment,misc]
     probe_value_type = None  # type: ignore[assignment,misc]
     probe_shared_ptr = None  # type: ignore[assignment,misc]
     probe_callback = None  # type: ignore[assignment,misc]
@@ -50,6 +55,7 @@ except ImportError:
     atvv_control_parse = None  # type: ignore[assignment,misc]
     atvv_mic_open_command = None  # type: ignore[assignment,misc]
     atvv_mic_close_command = None  # type: ignore[assignment,misc]
+    postprocess = None  # type: ignore[assignment,misc]
 
 
 # ``CounterSink`` is the C++ typedef used by ``probe_callback``'s argument
@@ -65,10 +71,13 @@ __all__ = [
     "Counter",
     "AtvvCapabilities",
     "ImaDecoder",
+    "DcHighPassFilter",
+    "FrameAccumulator",
     "atvv_capabilities_parse",
     "atvv_control_parse",
     "atvv_mic_open_command",
     "atvv_mic_close_command",
+    "postprocess",
     "probe_value_type",
     "probe_shared_ptr",
     "probe_callback",

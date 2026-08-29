@@ -1,7 +1,7 @@
 # ADR-0012: Phase 2 — ATVV capability parse, control 编解码, IMA/DVI ADPCM, 格式与畸形输入的 C++ 迁移边界
 
-- Status: proposed
-- Date: 2026-08-29
+- Status: accepted
+- Date: 2026-08-29 (proposed) / 2026-08-30 (accepted with step 4 addenda)
 - Phase: 2 (of 9, per `docs/architecture/cpp-migration-execution-plan.md`)
 
 ## Context
@@ -54,10 +54,34 @@ Plan §1 rule 3 把"协议字节级、音频样本级匹配"列为不可妥协�
 
 **`remotemic::adpcm`** (`include/remotemic/adpcm/{ima_decoder,dc_highpass,postprocess,frame_accumulator}.hpp`)
 - `ImaDecoder`：无锁、单线程；`reset(predictor:i16, step_index:u8)`（clamp 到 `[-32768,32767]` / `[0,88]`），`decode(span<const u8>) -> std::vector<std::int16_t>`（每字节 2 样本，高 nibble 在前）；样本逐个等于 Python `IMAADPCMDecoder.decode`。
-- `DcHighPassFilter`：状态由调用方拥有；`reset()`、`process(span<const i16>) -> std::vector<std::int16_t>`。
+- `DcHighPassFilter`：状态由调用方拥有；`reset()`（清 `previous_input_` / `previous_output_` 并把 `initialized_` 翻回 `false`，下一个 `process()` 会重新用 `samples[0]` 初始化）、`process(span<const i16>) -> std::vector<std::int16_t>`。`reset()` 后的输出与一个全新构造的实例在相同输入上 sample-exact 相等（step 4 增加的 C++ 单元测试与 binding smoke 共同证明）。
 - `postprocess(span<const i16>, gain_db:double) -> std::vector<std::int16_t>`：3-tap smoothing + 增益 clamp 到 `[-24,24]` dB + `NaN/inf` 当 0 dB 处理 + 输出 clamp 到 `[-32768,32767]`。
-- `FrameAccumulator::append(span<const u8>, frame_size:u16) -> std::vector<std::vector<u8>>`：`frame_size <= 0` → 返回空。
+- `FrameAccumulator::append(span<const u8>, frame_size:u16) -> std::vector<std::vector<u8>>`、`reset() -> void`、`pending_size() -> size_t`。`frame_size == 0` → 返回空 list 且不写入 pending buffer（与 Python `FrameAccumulator.append` 的 `if frame_size <= 0: return []` 守卫逐字节对应；这就是为什么 C++ 端必须用 `std::uint16_t`：负值不可能到达 `append`，而 `0` 走显式 no-op 分支，不会被当作"缓冲区吃满"无限循环）。`reset()` 丢弃 pending（O(1)，保留 `capacity()`），调用后下一次 `append()` 与全新构造实例在相同输入/frame_size 下结果完全相同，**包括跨 `frame_size` 重分帧场景**（即"旧流遗留 partial 帧不会进入新流的 emitted 列表"——这是 step 4 要证明的不变量）。
 - 线程：所有类型都非线程安全；所有权单一。
+
+#### 3.1 `frame_size` 协议域（Area 4 step 4 明确）
+
+| 来源 | 范围 | 行为 |
+|---|---|---|
+| 协议有效域 | `1..65535`（含两端） | 正常分帧 |
+| 协议无效（hard guard） | `0` | `append()` 返回 `[]` 且不写入 pending；这与 Python 基线一致 |
+| C++ 类型范围之外 | `< 0` 或 `> 65535` | 在 Python/native 边界处，pybind11 自身的 `std::uint16_t` 窄化在调用前抛出 `TypeError("append(): incompatible function arguments. ... Invoked with: ...")`（实测：pybind11 v2.12.0 + Python 3.11），数据**不入 C++**。这不是项目策略，是 pybind11 把"无法窄化到目标 C++ 类型"打包成 `incompatible function arguments` 的固定行为。step 4 smoke `test_boundary_frame_size_negative` / `_above_uint16` 用 `assertRaises(Exception)` 兼容抓取；测试**不**硬绑具体异常类型，避免 pybind11 升级把 `OverflowError → TypeError` 之类的微调做成假阳性。如果未来 binding 改为接受 Python `int` 并显式抛 `OverflowError`，测试仍能过 |
+| Invariant | `0 <= pending_size() < frame_size` | 每次成功 `append()`（`frame_size > 0`）后必然成立；`reset()` 后 trivial `0` |
+
+#### 3.2 Area 4 范围重申（step 4 补强）
+
+Area 4 只承担：
+
+1. **纯计算**：单极 IIR 高通 + 3-tap 平滑 + 直流移除非语音频段 → 由 `DcHighPassFilter` / `postprocess` 提供，无 I/O、无线程、无全局状态。
+2. **字节重分帧**：把任意片段 ATVV 通知 payload 按 `frame_size` 切成定长帧 → 由 `FrameAccumulator` 提供；`reset()` 是"新流"边界，自己维护一个 `pending_` 缓冲。
+
+Area 4 **不承担**：
+
+- PCM 队列、20 ms 调度、WASAPI / 音频设备路由、线程 / 任务模型与会话状态机（这些属于 Phase 5/6 + `atvv_session` / `voice_controller` / `audio_playback`，不归此 ADR）。
+- BLE / WinRT 传输，与 Area 1/2 同。
+- 任何 release-build / frozen / PyInstaller 打包或安装器相关内容（见 §8 / 历史）。
+
+Area 4 的 `reset()` 是 *协议级* "新流" 标记（一个新 20 ms PDU 流开始时由调用方决定调用），不是会话或线程同步原语。
 
 ### 4. 黄金夹具所有权（单一来源）
 
@@ -129,12 +153,13 @@ Phase 2 全部 4 区完成 → 单独一次 Phase 2 closeout commit，版本号 
 
 ## Validation gates（要全部跑通才能把 ADR 状态从 `proposed` 改为 `accepted`）
 
-G1. `cmake --build build/python --config Debug --target remotemic_atvv_tests --parallel && ctest --test-dir build/python -C Debug -R '^remotemic_atvv_tests$'` 通过。
-G2. 同样 `--config Release` 通过。
-G3. `ctest --test-dir build/python -C Release -R '^remotemic_atvv_bind_smoke$'` 通过。
+G1. `cmake --build build/python --config Debug --target remotemic_atvv_tests remotemic_adpcm_ima_tests remotemic_adpcm_dc_tests remotemic_adpcm_postprocess_tests remotemic_adpcm_frame_tests --parallel && ctest --test-dir build/python -C Debug -R '^(remotemic_atvv_tests|remotemic_atvv_control_tests|remotemic_adpcm_ima_tests|remotemic_adpcm_dc_tests|remotemic_adpcm_postprocess_tests|remotemic_adpcm_frame_tests)$'` 全部 6 个 area 测试通过。
+G2. 同样 `--config Release` 6 个 area 测试通过。
+G3. `ctest --test-dir build/python -C Release -R '^(remotemic_atvv_bind_smoke|remotemic_atvv_control_bind_smoke|remotemic_adpcm_ima_bind_smoke|remotemic_adpcm_dc_bind_smoke|remotemic_adpcm_postprocess_bind_smoke|remotemic_adpcm_frame_bind_smoke)$'` 6 个 binding smoke 全部通过。
 G4. `pytest tests/test_atvv_protocol.py tests/test_atvv_golden_fixture.py -q`（默认 python 模式）100% 通过。
-G5. `REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL=shadow pytest tests/test_atvv_native_parity.py -q` 100% 通过（运行时 shadow 等价证明）。
-G6. 冻结程序 `RemoteMicRC003.exe --dry-run` 在 bundled 与 stripped 两种状态下都通过（Phase 1 的 Gate 3 不退化）。
+G5. `REMOTEMIC_NATIVE_CHOICE_ATVV_PROTOCOL=shadow pytest tests/test_atvv_native_parity.py -q` 100% 通过（运行时 shadow 等价证明；此为 step 5 工作，不属于本次 accepted 提交的依据，但在 step 5 通过前不视 Phase 2 整体 closeout 完成）。
+
+> **Phase 1 historical gate (G6) is removed.** Phase 1 曾经把"PyInstaller frozen `RemoteMicRC003.exe --dry-run` 在 bundled / stripped 两种状态下都通过"列为 Gate 3。该 gate 关心的是 frozen 打包产物，与 Phase 2 纯计算 4 区的 byte-exact / sample-exact 验收**没有直接因果关系**；继续保留它会让 Phase 2 closeout 卡在没有 fixed-version-phase-2 的 frozen 产物上，违背 `cpp-migration-version-policy.md` Rule 1（"在 Phase 2 完成前不做任何 frozen / 安装器 / 便携 ZIP 打包"）。Frozen 打包单独另开 ADR（计划列入 Phase 9 之后），不挂在此处。
 
 ## Non-goals（明确不做）
 

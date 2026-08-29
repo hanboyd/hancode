@@ -25,7 +25,12 @@ std::vector<std::vector<std::uint8_t>> FrameAccumulator::append(
     std::vector<std::vector<std::uint8_t>> out;
     if (frame_size <= 0) {
         // The Python baseline's guard rejects zero / negative widths
-        // and does not buffer the data; the call is a no-op.
+        // and does not buffer the data; the call is a no-op. The
+        // accumulated pending buffer is NOT cleared on this no-op
+        // path (matches the Python FrameAccumulator.append at
+        // atvv_protocol.py:271-279); the caller controls a stream
+        // boundary via reset() rather than by append() with a bad
+        // frame_size.
         return out;
     }
 
@@ -40,7 +45,19 @@ std::vector<std::vector<std::uint8_t>> FrameAccumulator::append(
             pending_.begin(),
             pending_.begin() + static_cast<std::ptrdiff_t>(target));
     }
+    // Post-condition (ADR-0012 Phase 2 / Area 4 step 4 invariant):
+    // after a successful append with frame_size > 0 the pending
+    // remainder is always strictly less than frame_size, because
+    // the while loop above drains frames of exactly frame_size
+    // bytes until pending_.size() < target.
     return out;
+}
+
+void FrameAccumulator::reset() noexcept {
+    // Drop the pending buffer in O(1). capacity() is retained so
+    // the next stream can reuse the allocation without an extra
+    // heap request, but the size() drops to 0 immediately.
+    pending_.clear();
 }
 
 std::size_t FrameAccumulator::pending_size() const noexcept {

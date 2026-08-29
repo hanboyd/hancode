@@ -7,6 +7,9 @@
 #include "remotemic/atvv/capabilities.hpp"
 #include "remotemic/atvv/control.hpp"
 #include "remotemic/adpcm/ima_decoder.hpp"
+#include "remotemic/adpcm/dc_highpass.hpp"
+#include "remotemic/adpcm/postprocess.hpp"
+#include "remotemic/adpcm/frame_accumulator.hpp"
 
 #include <variant>
 
@@ -284,4 +287,79 @@ PYBIND11_MODULE(_C, m) {
                                &adpcm::ImaDecoder::predictor)
         .def_property_readonly("step_index",
                                &adpcm::ImaDecoder::step_index);
+
+    // ------------------------------------------------------------------
+    // 8. DC high-pass + smoothing/gain + FrameAccumulator
+    //    (Phase 2 / Area 4, ADR-0012)
+    //    All three match
+    //    apps/windows/rc003/src/ovb_rc003/atvv_protocol.py:210-285.
+    //    DCHighPassFilter and FrameAccumulator are stateful value
+    //    types; postprocess is a pure free function.
+    // ------------------------------------------------------------------
+    py::class_<adpcm::DcHighPassFilter>(m, "DcHighPassFilter")
+        .def(py::init<double, double>(),
+             py::arg("sample_rate"),
+             py::arg("cutoff_hz"),
+             "Construct a single-pole high-pass filter with the\n"
+             "given sample rate and cutoff frequency. alpha =\n"
+             "exp(-2*pi*cutoff_hz/sample_rate).")
+        .def("reset", &adpcm::DcHighPassFilter::reset,
+             "Reset internal state; the next process() call will\n"
+             "re-initialize previous_input from samples[0].")
+        .def("process",
+             [](adpcm::DcHighPassFilter& self,
+                std::vector<std::int16_t> samples) {
+                 return self.process(samples);
+             },
+             py::arg("samples"),
+             "Filter the input samples; returns a new vector.\n"
+             "Empty input -> empty output.")
+        .def_property_readonly("alpha", &adpcm::DcHighPassFilter::alpha)
+        .def_property_readonly("sample_rate",
+                               &adpcm::DcHighPassFilter::sample_rate)
+        .def_property_readonly("cutoff_hz",
+                               &adpcm::DcHighPassFilter::cutoff_hz);
+
+    m.def(
+        "postprocess",
+        [](std::vector<std::int16_t> samples, double gain_db) {
+            return adpcm::postprocess(samples, gain_db);
+        },
+        py::arg("samples"),
+        py::arg("gain_db") = 10.0,
+        "Apply 3-tap smoothing + dB gain to a sample sequence.\n"
+        "Empty input -> empty output. NaN/inf gain_db treated as 0;\n"
+        "final gain_db clamped to [-24, +24]; output clamped to int16."
+    );
+
+    py::class_<adpcm::FrameAccumulator>(m, "FrameAccumulator")
+        .def(py::init<>(),
+             "Construct an empty accumulator.")
+        .def("append",
+             [](adpcm::FrameAccumulator& self,
+                py::bytes data,
+                std::uint16_t frame_size) {
+                 const std::string_view view = data;
+                 std::span<const std::uint8_t> bytes(
+                     reinterpret_cast<const std::uint8_t*>(view.data()),
+                     view.size());
+                 return self.append(bytes, frame_size);
+             },
+             py::arg("data"),
+             py::arg("frame_size"),
+             "Append data and return any complete frames of\n"
+             "frame_size bytes; leftover bytes stay pending.\n"
+             "frame_size is std::uint16_t; the protocol-valid\n"
+             "domain is 1..65535. frame_size == 0 returns []\n"
+             "and does NOT buffer the data (matches the Python\n"
+             "baseline). Out-of-range values from Python raise\n"
+             "pybind11's standard OverflowError before the call.")
+        .def("reset", &adpcm::FrameAccumulator::reset,
+             "Discard any pending bytes accumulated from previous\n"
+             "calls. After reset() the next append() behaves as if\n"
+             "the instance were freshly constructed: no partial\n"
+             "frame from a previous stream is carried over. Does\n"
+             "not throw.")
+        .def_property_readonly("pending_size",
+                               &adpcm::FrameAccumulator::pending_size);
 }

@@ -114,6 +114,98 @@ int main() {
     run_dc_fixture("dc-dc-blocked.json");
     run_dc_fixture("dc-ac-passes.json");
 
+    // ------------------------------------------------------------------
+    // Phase 2 / Area 4 step 4: reset() parity.
+    //
+    // Drive state into the filter, reset(), drive the SAME bytes
+    // again, and compare to a freshly constructed filter fed the
+    // same bytes. After reset() the post-reset output must equal
+    // the fresh-instance output sample-for-sample. This proves
+    // reset() really clears previous_input_ / previous_output_ /
+    // initialized_ rather than only partially zeroing state.
+    // ------------------------------------------------------------------
+    {
+        // Use the 100 Hz AC tone fixture: it carries non-trivial
+        // state into the filter so any partial reset would be
+        // detectable.
+        json fixture;
+        if (!load_fixture("dc-ac-passes.json", fixture)) {
+            expect(false, "reset_parity: dc-ac-passes.json not found");
+        } else {
+            const auto& samples = fixture.at("samples");
+            const std::size_t half = samples.size() / 2;
+            std::vector<std::int16_t> first_half;
+            std::vector<std::int16_t> second_half;
+            first_half.reserve(half);
+            second_half.reserve(samples.size() - half);
+            for (std::size_t i = 0; i < half; ++i) {
+                first_half.push_back(
+                    static_cast<std::int16_t>(samples.at(i).get<int>()));
+            }
+            for (std::size_t i = half; i < samples.size(); ++i) {
+                second_half.push_back(
+                    static_cast<std::int16_t>(samples.at(i).get<int>()));
+            }
+
+            // Path A: drive the filter with the first half, reset(),
+            // then drive again with the full tone. This must equal
+            // a fresh-instance filter running on the full tone.
+            DcHighPassFilter fa(16000.0, 20.0);
+            (void)fa.process(first_half);
+            fa.reset();
+            const auto a_reset = fa.process(second_half);
+
+            // Path B: a brand new filter driving only the
+            // second_half (matched to the post-reset segment).
+            DcHighPassFilter fb(16000.0, 20.0);
+            const auto b_fresh = fb.process(second_half);
+
+            expect(a_reset.size() == b_fresh.size(),
+                   "reset_parity: post-reset output length differs from fresh instance");
+            bool match = true;
+            for (std::size_t i = 0; i < a_reset.size(); ++i) {
+                if (a_reset[i] != b_fresh[i]) {
+                    match = false;
+                    break;
+                }
+            }
+            expect(match,
+                   "reset_parity: post-reset output must sample-equal fresh-instance output");
+        }
+    }
+
+    {
+        // Even stronger check: the AC full tone fed into a long-
+        // lived filter, then reset(), then the AC full tone fed
+        // again, must reproduce sample-exact.
+        const std::vector<std::int16_t> six{100, -100, 200, -200, 300, -300};
+        DcHighPassFilter runner(16000.0, 20.0);
+        (void)runner.process(six);
+        runner.reset();
+        // Fresh instance on the same samples -> the result
+        // captured below is the gold output that the post-reset
+        // runner must reproduce.
+        DcHighPassFilter gold(16000.0, 20.0);
+        const auto gold_out = gold.process(six);
+        const auto runner_out = runner.process(six);
+        expect(runner_out == gold_out,
+               "reset_parity_strong: post-reset multi-sample run must be sample-exact with a fresh instance");
+    }
+
+    {
+        // reset() before any process() must keep the filter in the
+        // same state as a freshly constructed one (alpha / sample
+        // rate / cutoff preserved, but state == uninitialized).
+        const std::vector<std::int16_t> samples{42, -42, 84, -84};
+        DcHighPassFilter f(16000.0, 20.0);
+        f.reset();
+        const auto actual = f.process(samples);
+        DcHighPassFilter fresh(16000.0, 20.0);
+        const auto expected = fresh.process(samples);
+        expect(actual == expected,
+               "reset_parity_constructor: reset() on a never-used filter must match the constructor state");
+    }
+
     if (failures == 0) {
         std::cout << "All adpcm_dc_highpass tests passed\n";
         return 0;
