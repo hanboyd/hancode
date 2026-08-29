@@ -101,6 +101,60 @@ class ATVVCapabilities:
         )
 
 
+def parse_control_payload(data: bytes) -> Optional[dict]:
+    """Pure field parser for ATVV control-channel payloads.
+
+    Mirrors the field extraction half of
+    ``atvv_session.handle_control`` (``atvv_session.py:178-223``)
+    byte-for-byte so the C++ binding
+    (``remotemic_native.atvv_control_parse``) can be shadow-compared
+    against it. Per ADR-0012 §2 the state machine (capability gate,
+    decoder reset, sync predictor hold, late-audio discard) stays in
+    Python; this function only extracts fields.
+
+    Returns:
+      * ``None`` for empty payloads (the state machine raises
+        ATVVProtocolError on None; the parser itself does not raise).
+      * A dict shaped to match the C++ binding exactly:
+          {"opcode": "Caps"}
+          {"opcode": "MicButton"}
+          {"opcode": "AudioStart", "session_id": int_or_None}
+          {"opcode": "AudioStop"}
+          {"opcode": "AudioSync", "predictor": int, "step_index": int}
+          {"opcode": "Unknown", "raw_opcode": int}
+
+    AUDIO_SYNC payloads shorter than 7 bytes fall through to Unknown
+    with ``raw_opcode == OPCODE_AUDIO_SYNC`` so the state machine sees
+    a uniform value and decides whether to discard.
+    """
+    if not data:
+        return None
+
+    opcode = data[0]
+
+    if opcode == OPCODE_CAPS:
+        return {"opcode": "Caps"}
+    if opcode == OPCODE_MIC_BUTTON:
+        return {"opcode": "MicButton"}
+    if opcode == OPCODE_AUDIO_STOP:
+        return {"opcode": "AudioStop"}
+    if opcode == OPCODE_AUDIO_START:
+        session_id = data[3] if len(data) >= 4 else None
+        return {"opcode": "AudioStart", "session_id": session_id}
+    if opcode == OPCODE_AUDIO_SYNC:
+        if len(data) >= 7:
+            predictor = int.from_bytes(data[4:6], "big", signed=True)
+            step_index = data[6]
+            return {
+                "opcode": "AudioSync",
+                "predictor": predictor,
+                "step_index": step_index,
+            }
+        return {"opcode": "Unknown", "raw_opcode": OPCODE_AUDIO_SYNC}
+
+    return {"opcode": "Unknown", "raw_opcode": opcode}
+
+
 class IMAADPCMDecoder:
     """Standard IMA/DVI 4-bit ADPCM decoder, 2 samples per byte (high nibble first)."""
 

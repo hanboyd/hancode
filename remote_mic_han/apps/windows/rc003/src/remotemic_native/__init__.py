@@ -19,6 +19,9 @@ try:
         Counter,
         AtvvCapabilities,
         atvv_capabilities_parse,
+        atvv_control_parse,
+        atvv_mic_open_command,
+        atvv_mic_close_command,
         probe_value_type,
         probe_shared_ptr,
         probe_callback,
@@ -42,6 +45,9 @@ except ImportError:
     probe_callback = None  # type: ignore[assignment,misc]
     probe_throw = None  # type: ignore[assignment,misc]
     atvv_capabilities_parse = None  # type: ignore[assignment,misc]
+    atvv_control_parse = None  # type: ignore[assignment,misc]
+    atvv_mic_open_command = None  # type: ignore[assignment,misc]
+    atvv_mic_close_command = None  # type: ignore[assignment,misc]
 
 
 # ``CounterSink`` is the C++ typedef used by ``probe_callback``'s argument
@@ -57,6 +63,9 @@ __all__ = [
     "Counter",
     "AtvvCapabilities",
     "atvv_capabilities_parse",
+    "atvv_control_parse",
+    "atvv_mic_open_command",
+    "atvv_mic_close_command",
     "probe_value_type",
     "probe_shared_ptr",
     "probe_callback",

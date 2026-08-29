@@ -48,6 +48,8 @@ T = TypeVar("T")
 # than silently falling back to python.
 _DEFAULT_CHOICES: dict[str, ImplementationChoice] = {
     "atvv_protocol": "python",
+    "atvv_control_parse": "python",
+    "atvv_control_encode": "python",
 }
 
 _ENV_PREFIX = "REMOTEMIC_NATIVE_CHOICE_"

@@ -20,6 +20,14 @@ Both python and native returns are normalized to the
 ``ATVVCapabilities`` dataclass so callers do not have to know which
 implementation ran. The shadow mode re-uses ``choose_implementation``'s
 strict equality check (any drift -> RuntimeError).
+
+Phase 2 / Area 2 adds three sibling switches for the ATVV control
+channel (ADR-0012 §3 / §6):
+    parse_control(data: bytes) -> Optional[dict]
+    mic_open_command(version: int) -> bytes
+    mic_close_command(version: int, session_id: int) -> bytes
+
+All three are pure compute; shadow is permitted.
 """
 
 from __future__ import annotations
@@ -77,4 +85,84 @@ parse_capabilities = choose_implementation(
 )
 
 
-__all__ = ["parse_capabilities"]
+# ---------------------------------------------------------------------------
+# ATVV control channel (Phase 2 / Area 2, ADR-0012 §3 / §6)
+# ---------------------------------------------------------------------------
+# Both encoders and the decoder are pure compute; shadow is permitted. The
+# native and python sides return byte-for-byte identical payloads; the
+# decoder returns the same dict shape (``{opcode: ..., ...}``).
+
+
+def _parse_control_python(data: bytes) -> Optional[dict]:
+    return proto.parse_control_payload(data)
+
+
+def _parse_control_native(data: bytes) -> Optional[dict]:
+    import remotemic_native as _rn  # type: ignore[import-not-found]
+
+    if not _rn._C_AVAILABLE:
+        return proto.parse_control_payload(data)
+    return _rn.atvv_control_parse(data)
+
+
+def _mic_open_command_python(version: int) -> bytes:
+    return proto.mic_open_command(version)
+
+
+def _mic_open_command_native(version: int) -> bytes:
+    import remotemic_native as _rn  # type: ignore[import-not-found]
+
+    if not _rn._C_AVAILABLE:
+        return proto.mic_open_command(version)
+    return _rn.atvv_mic_open_command(version)
+
+
+def _mic_close_command_python(version: int, session_id: int) -> bytes:
+    return proto.mic_close_command(version, session_id)
+
+
+def _mic_close_command_native(version: int, session_id: int) -> bytes:
+    import remotemic_native as _rn  # type: ignore[import-not-found]
+
+    if not _rn._C_AVAILABLE:
+        return proto.mic_close_command(version, session_id)
+    return _rn.atvv_mic_close_command(version, session_id)
+
+
+parse_control_python = _parse_control_python
+parse_control_native = _parse_control_native
+mic_open_command_python = _mic_open_command_python
+mic_open_command_native = _mic_open_command_native
+mic_close_command_python = _mic_close_command_python
+mic_close_command_native = _mic_close_command_native
+
+
+# parse_control uses its own switch name so callers can flip parse_control
+# independently of parse_capabilities (e.g. switch capability to native in
+# production while keeping control on python during a phased rollout).
+parse_control = choose_implementation(
+    "atvv_control_parse",
+    python_impl=parse_control_python,
+    native_impl=parse_control_native,
+    side_effect_free=True,
+)
+mic_open_command = choose_implementation(
+    "atvv_control_encode",
+    python_impl=mic_open_command_python,
+    native_impl=mic_open_command_native,
+    side_effect_free=True,
+)
+mic_close_command = choose_implementation(
+    "atvv_control_encode",
+    python_impl=mic_close_command_python,
+    native_impl=mic_close_command_native,
+    side_effect_free=True,
+)
+
+
+__all__ = [
+    "parse_capabilities",
+    "parse_control",
+    "mic_open_command",
+    "mic_close_command",
+]
