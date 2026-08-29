@@ -1,7 +1,67 @@
 # Changelog — Remote Mic RC003 (Windows)
 
+## [0.2.0-candidate] — 2026-08-29 — Phase 1 complete
+
+里程碑：9 阶段路线图第 1 阶段（C++/CPython 绑定骨架）完成且通过 exit review。
+
+详细合同与门禁见
+[`docs/decisions/ADR-0011-cpp-python-binding-and-error-model.md`](decisions/ADR-0011-cpp-python-binding-and-error-model.md) 与
+[`docs/architecture/cpp-migration-execution-plan.md`](architecture/cpp-migration-execution-plan.md) 第 1 阶段。
+
+### 新增（迁移基础设施，不动产品行为）
+
+- 顶层 `CMakeLists.txt`：拆分出 `remotemic_core`（纯类型 + 错误类别）、
+  `remotemic_platform_win32`（Win32 平台层）、`remotemic_bind`
+  （INTERFACE 占位）、`remotemic_native_c`（pybind11 模块，输出名
+  `_C`）。pybind11 v2.12.0 通过 FetchContent 固定到 CPython 3.11 venv
+  shim，生成 `cp311-win_amd64` ABI 标签。
+- `include/remotemic/bind/` + `src/bind/` + `tests/bind/`：
+  `Error` / `ErrorCode` / `ErrorCategory`、`VersionInfo` / `Counter` /
+  `CounterSink` 探针类型与 4 类别绑定烟雾测试。
+- `apps/windows/rc003/src/remotemic_native/__init__.py`：公开 Python
+  包装器（按 ADR-0011 第 50–51 行，`remotemic_native` 包对内提供
+  `_C`，产品代码只通过公开包装器导入；`_C.pyd` 缺失时优雅降级到
+  `None` 哨兵并设置 `_C_AVAILABLE = False`）。
+- `apps/windows/rc003/src/ovb_rc003/_remotemic_native_runtime.py`：
+  按 `REMOTEMIC_NATIVE_CHOICE_<MODULE_NAME>` 环境变量切换
+  `python` / `native` / `shadow`；shadow 必须 `side_effect_free=True`
+  且值不匹配或原生抛异常时抛 `RuntimeError`。
+- `apps/windows/rc003/tests/test_remotemic_native_runtime.py`：
+  11 个测试覆盖默认 python、环境变量覆盖、shadow 不匹配/异常、
+  side-effect-free 约束；11/11 通过。
+- `apps/windows/rc003/build/RemoteMicRC003.spec`：把整个
+  `remotemic_native/` 包目录（含 `__init__.py` + `_C.pyd`）通过
+  `datas=` 收进 `_internal/`，并把 `remotemic_native` 加入
+  `hiddenimports`。不再以单 `_C.pyd` 暴露在 `_internal/` 根。
+- `apps/windows/rc003/src/ovb_rc003/__main__.py`：`--dry-run` 按
+  `_rn._C_AVAILABLE`（不是导入成功与否）分支；fallback 路径执行一次
+  真实的 `ATVVCapabilities.parse()` 解析合成的 v1 caps payload，
+  并打印 `version=0x0100 selected_codec=0x02 sample_rate=16000
+  frame_size=120`。Gate 3 经冻构建（`dist/RemoteMicRC003/RemoteMicRC003.exe`
+  双路径）实测通过。
+- `.github/workflows/windows-rc003-ci.yml`：新增 `pull_request` /
+  `push` paths filter（C++ 树、ADR、执行计划）以及
+  `C++ core build + CTest (Debug + Release)` 步骤（在 VB-CABLE
+  fetch 之后、PyInstaller 之前），跑 `remotemic_bind_smoke` 作为
+  CTest 一部分。
+- `.gitignore`：追加 `/Testing/`（CTest scratch）。
+
+### 已知限制 / Phase 2 起跑线
+
+- Phase 2 入口严格限定：ATVV capability parse、ATVV control message
+  编解码、IMA/DVI ADPCM、格式与畸形输入处理。BLE、WASAPI、
+  VoiceController/会话状态机、Windows 输入、Typeless/Qianwen、UI
+  均不在 Phase 2 范围。
+- 不升 `0.2.0` 之外的小版本号（per
+  `memory/cpp-migration-version-policy.md` Rule 2，下一次小版本号
+  升 `0.3.0` 留给 Phase 2 完成）。
+- 本次不重新打包、不发布新安装器/便携 ZIP（per Rule 1）。
+
+---
+
 本项目按“候选发布”打标签。内部构建版本号固定在
-`installer/RemoteMicRC003Setup.iss` 的 `AppVersion`（当前 `0.1.0-candidate`），
+`installer/RemoteMicRC003Setup.iss` 的 `AppVersion`（当前 `0.1.0-candidate`；随 ADR-0010
+in-place installer upgrade 批次一起 bump，本 commit 不动），
 仓库级 tag 只作为发布编号，两者对应关系以每条发布说明为准。
 
 标签格式：`v<内部版本>-windows-rc003-candidate.<序号>`。
