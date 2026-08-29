@@ -75,6 +75,33 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# IMA/DVI ADPCM decoder + DC high-pass + smoothing/gain + FrameAccumulator
+# (Phase 2 / Area 3 + Area 4, per ADR-0012). Same constraints as
+# remotemic_atvv above: pure logic, no <windows.h>, no <fstream>, no env-var
+# reads, no filesystem writes. nlohmann_json is inherited via the
+# transitive dependency on remotemic_atvv (only Area 3 tests need it; the
+# decoder itself has no JSON dependency).
+# ---------------------------------------------------------------------------
+add_library(remotemic_adpcm STATIC
+    src/adpcm/ima_decoder.cpp
+)
+
+target_include_directories(remotemic_adpcm
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(remotemic_adpcm PUBLIC remotemic_atvv)
+
+target_compile_features(remotemic_adpcm PUBLIC cxx_std_20)
+
+if(MSVC)
+    target_compile_options(remotemic_adpcm PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_adpcm PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ---------------------------------------------------------------------------
 # Win32 platform layer: filesystem, env, logger, Application::diagnose.
 # May include <windows.h> and other OS headers. Consumes remotemic_core.
 # ---------------------------------------------------------------------------
@@ -156,6 +183,22 @@ if(REMOTEMIC_BUILD_TESTS)
     endif()
     add_test(NAME remotemic_atvv_control_tests COMMAND remotemic_atvv_control_tests)
     set_tests_properties(remotemic_atvv_control_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 2 / Area 3 TDD red state: stub returns {} for any input
+    # and ignores reset(), so all 11 decode fixtures FAIL. This is
+    # intentional; step 3 implements the real decoder. See
+    # ADR-0012 section 3 / section 8 and tests/unit/test_adpcm_ima.cpp.
+    add_executable(remotemic_adpcm_ima_tests tests/unit/test_adpcm_ima.cpp)
+    target_link_libraries(remotemic_adpcm_ima_tests PRIVATE remotemic_adpcm)
+    if(MSVC)
+        target_compile_options(remotemic_adpcm_ima_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_adpcm_ima_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_adpcm_ima_tests COMMAND remotemic_adpcm_ima_tests)
+    set_tests_properties(remotemic_adpcm_ima_tests PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
