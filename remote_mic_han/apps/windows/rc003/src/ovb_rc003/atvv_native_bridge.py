@@ -204,10 +204,121 @@ decode_adpcm_frame = choose_implementation(
 )
 
 
+# ---------------------------------------------------------------------------
+# ADPCM DC high-pass + postprocess + FrameAccumulator
+# (Phase 2 / Area 4, ADR-0012 section 3 / section 6)
+# ---------------------------------------------------------------------------
+# All three are pure compute (or pure compute with private state); shadow is
+# permitted. Compare with strict ``==``: every output is a fresh
+# list[int] / list[bytes] value whose elements are integer-or-bytes after
+# the int16 / uint8 clamps inside the helpers, so a sample-exact
+# comparison directly implements the ADR-0012 section 5 hard rule.
+
+
+def _apply_dc_highpass_python(samples: list) -> list:
+    """Run the Python baseline DC high-pass on a fresh filter."""
+    flt = proto.DCHighPassFilter()
+    return [int(s) for s in flt.process(samples)]
+
+
+def _apply_dc_highpass_native(samples: list) -> list:
+    import remotemic_native as _rn  # type: ignore[import-not-found]
+
+    if not _rn._C_AVAILABLE:
+        return _apply_dc_highpass_python(samples)
+    flt = _rn.DcHighPassFilter(16000.0, 20.0)
+    return [int(s) for s in flt.process(samples)]
+
+
+apply_dc_highpass_python = _apply_dc_highpass_python
+apply_dc_highpass_native = _apply_dc_highpass_native
+
+
+apply_dc_highpass = choose_implementation(
+    "adpcm_dc_highpass",
+    python_impl=apply_dc_highpass_python,
+    native_impl=apply_dc_highpass_native,
+    side_effect_free=True,
+)
+
+
+def _postprocess_pcm_python(samples: list, gain_db: float) -> list:
+    return [int(s) for s in proto.postprocess(samples, gain_db)]
+
+
+def _postprocess_pcm_native(samples: list, gain_db: float) -> list:
+    import remotemic_native as _rn  # type: ignore[import-not-found]
+
+    if not _rn._C_AVAILABLE:
+        return _postprocess_pcm_python(samples, gain_db)
+    return [int(s) for s in _rn.postprocess(samples, gain_db)]
+
+
+postprocess_pcm_python = _postprocess_pcm_python
+postprocess_pcm_native = _postprocess_pcm_native
+
+
+postprocess_pcm = choose_implementation(
+    "adpcm_postprocess",
+    python_impl=postprocess_pcm_python,
+    native_impl=postprocess_pcm_native,
+    side_effect_free=True,
+)
+
+
+def _accumulate_frames_python(
+    data_chunks: list, frame_size: int
+) -> list:
+    """Drive the Python baseline FrameAccumulator through an ordered
+    sequence of data chunks (each an ``int``-iterable / ``bytes`` /
+    ``bytearray``) and return every emitted frame as ``list[bytes]``.
+    Used by step 5 to verify byte-exact parity with the native side
+    across both single-append and multi-append-across-calls inputs.
+    """
+    acc = proto.FrameAccumulator()
+    out: list = []
+    for chunk in data_chunks:
+        # Mirror the binding contract: skip <= 0 and reject > 65535
+        # by routing through the public Python guard.
+        for f in acc.append(chunk, frame_size):
+            out.append(bytes(f))
+    return out
+
+
+def _accumulate_frames_native(
+    data_chunks: list, frame_size: int
+) -> list:
+    import remotemic_native as _rn  # type: ignore[import-not-found]
+
+    if not _rn._C_AVAILABLE:
+        return _accumulate_frames_python(data_chunks, frame_size)
+    acc = _rn.FrameAccumulator()
+    out: list = []
+    for chunk in data_chunks:
+        for f in acc.append(chunk, frame_size):
+            out.append(bytes(f))
+    return out
+
+
+accumulate_frames_python = _accumulate_frames_python
+accumulate_frames_native = _accumulate_frames_native
+
+
+accumulate_frames = choose_implementation(
+    "adpcm_frame_accumulator",
+    python_impl=accumulate_frames_python,
+    native_impl=accumulate_frames_native,
+    side_effect_free=True,
+)
+
+
 __all__ = [
     "parse_capabilities",
     "parse_control",
     "mic_open_command",
     "mic_close_command",
     "decode_adpcm_frame",
+    "apply_dc_highpass",
+    "postprocess_pcm",
+    "accumulate_frames",
 ]
