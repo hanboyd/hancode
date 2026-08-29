@@ -5,6 +5,9 @@
 #include "remotemic/bind/errors.hpp"
 #include "remotemic/bind/probe_types.hpp"
 #include "remotemic/atvv/capabilities.hpp"
+#include "remotemic/atvv/control.hpp"
+
+#include <variant>
 
 namespace py = pybind11;
 using namespace remotemic;
@@ -158,5 +161,92 @@ PYBIND11_MODULE(_C, m) {
         "legacy version with insufficient length). Otherwise returns an\n"
         "AtvvCapabilities value type matching the Python baseline\n"
         "ATVVCapabilities dataclass byte-for-byte."
+    );
+
+    // ------------------------------------------------------------------
+    // 6. ATVV control encode + decode (Phase 2 / Area 2, ADR-0012)
+    //    parse_control_message returns std::optional<std::variant>; the
+    //    std::variant doesn't translate to a single py::class_, so the
+    //    binding converts each alternative to a small Python dict
+    //    matching the JSON fixtures. The set of dict keys per opcode
+    //    matches tests/unit/test_atvv_control.cpp exactly so the bind
+    //    smoke can compare them without tolerance. encode functions
+    //    return py::bytes so the result is byte-for-byte comparable
+    //    with the Python baseline (atvv_protocol.py:48-61).
+    // ------------------------------------------------------------------
+    m.def(
+        "atvv_control_parse",
+        [](py::bytes data) -> std::optional<py::dict> {
+            const std::string_view view = data;
+            std::span<const std::uint8_t> bytes(
+                reinterpret_cast<const std::uint8_t*>(view.data()),
+                view.size());
+            auto msg = atvv::parse_control_message(bytes);
+            if (!msg.has_value()) {
+                return std::nullopt;
+            }
+            py::dict out;
+            if (std::holds_alternative<atvv::CapsPayload>(*msg)) {
+                out["opcode"] = "Caps";
+            } else if (std::holds_alternative<atvv::MicButtonPayload>(
+                           *msg)) {
+                out["opcode"] = "MicButton";
+            } else if (std::holds_alternative<atvv::AudioStopPayload>(
+                           *msg)) {
+                out["opcode"] = "AudioStop";
+            } else if (std::holds_alternative<atvv::AudioStartPayload>(
+                           *msg)) {
+                const auto& p = std::get<atvv::AudioStartPayload>(*msg);
+                out["opcode"] = "AudioStart";
+                if (p.session_id.has_value()) {
+                    out["session_id"] = py::int_(*p.session_id);
+                } else {
+                    out["session_id"] = py::none();
+                }
+            } else if (std::holds_alternative<atvv::AudioSyncPayload>(
+                           *msg)) {
+                const auto& p = std::get<atvv::AudioSyncPayload>(*msg);
+                out["opcode"] = "AudioSync";
+                out["predictor"] = p.predictor;
+                out["step_index"] = p.step_index;
+            } else {
+                const auto& p = std::get<atvv::UnknownPayload>(*msg);
+                out["opcode"] = "Unknown";
+                out["raw_opcode"] = p.raw_opcode;
+            }
+            return out;
+        },
+        py::arg("data"),
+        "Parse a device->host ATVV control payload.\n"
+        "Returns None for empty input (state machine raises on None).\n"
+        "Otherwise returns a dict with an 'opcode' key plus per-opcode\n"
+        "fields. Keys/values match the C++ unit test and the JSON\n"
+        "golden fixtures byte-for-byte."
+    );
+
+    m.def(
+        "atvv_mic_open_command",
+        [](std::uint16_t version) -> py::bytes {
+            const auto v = atvv::mic_open_command(version);
+            return py::bytes(
+                reinterpret_cast<const char*>(v.data()), v.size());
+        },
+        py::arg("version"),
+        "Encode a host->device MIC_OPEN command. v1 (>= 0x0100)\n"
+        "produces b'\\x0c\\x00'; legacy produces b'\\x0c\\x00\\x00'."
+    );
+
+    m.def(
+        "atvv_mic_close_command",
+        [](std::uint16_t version, std::uint8_t session_id) -> py::bytes {
+            const auto v = atvv::mic_close_command(version, session_id);
+            return py::bytes(
+                reinterpret_cast<const char*>(v.data()), v.size());
+        },
+        py::arg("version"),
+        py::arg("session_id"),
+        "Encode a host->device MIC_CLOSE command. v1 (>= 0x0100)\n"
+        "produces b'\\x0d' followed by session_id; legacy produces\n"
+        "just b'\\x0d' (session_id ignored)."
     );
 }

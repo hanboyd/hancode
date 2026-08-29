@@ -187,6 +187,25 @@ if(REMOTEMIC_BUILD_TESTS)
         set_tests_properties(remotemic_atvv_bind_smoke PROPERTIES
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
+
+        # Phase 2 / Area 2 step 4: ATVV control binding smoke (G3 of
+        # ADR-0012). Loads the bundled .pyd, calls atvv_control_parse /
+        # atvv_mic_open_command / atvv_mic_close_command against each
+        # control JSON fixture (4 encode + 8 decode) and asserts the
+        # binding returns match the C++ unit test
+        # (remotemic_atvv_control_tests). On fail, do not flip the ADR
+        # to accepted.
+        add_test(
+            NAME remotemic_atvv_control_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_atvv_control_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_atvv_control_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
     endif()
 endif()
 
