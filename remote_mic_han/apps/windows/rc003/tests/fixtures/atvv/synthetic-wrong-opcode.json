@@ -1,0 +1,7 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "capabilities_reject",
+  "description": "7-byte payload whose first byte is not OPCODE_CAPS (0x0B) -> parse returns nullopt",
+  "capabilities_hex": "99010002000078",
+  "expected": null
+}

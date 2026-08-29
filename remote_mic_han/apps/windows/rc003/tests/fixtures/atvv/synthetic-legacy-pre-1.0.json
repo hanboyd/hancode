@@ -1,0 +1,12 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "capabilities_legacy",
+  "description": "legacy pre-1.0 capabilities (version=0x0000 < 0x0100); codecs read from byte[4], interaction forced to 0x00",
+  "capabilities_hex": "0b0000000200780000",
+  "expected_version": 0,
+  "expected_codecs": 2,
+  "expected_interaction": 0,
+  "expected_frame_size": 120,
+  "expected_codec": 2,
+  "expected_sample_rate": 16000.0
+}

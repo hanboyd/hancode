@@ -1,0 +1,7 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "capabilities_reject",
+  "description": "legacy (version=0x0000) capabilities payload that is shorter than the 9-byte minimum required for pre-1.0",
+  "capabilities_hex": "0b000000020078",
+  "expected": null
+}

@@ -1,0 +1,12 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "capabilities_v1",
+  "description": "v1 capabilities with codecs=0x01 (no 16k bit set) -> 8 kHz fallback",
+  "capabilities_hex": "0b010001030078",
+  "expected_version": 256,
+  "expected_codecs": 1,
+  "expected_interaction": 3,
+  "expected_frame_size": 120,
+  "expected_codec": 1,
+  "expected_sample_rate": 8000.0
+}

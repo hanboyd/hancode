@@ -1,0 +1,7 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "capabilities_reject",
+  "description": "control payload shorter than the 7-byte absolute minimum -> parse returns nullopt",
+  "capabilities_hex": "0b01",
+  "expected": null
+}

@@ -1,0 +1,12 @@
+{
+  "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "capabilities_v1",
+  "description": "v1 capabilities with frame_size=0 -> falls back to DEFAULT_FRAME_SIZE (120)",
+  "capabilities_hex": "0b010002030000",
+  "expected_version": 256,
+  "expected_codecs": 2,
+  "expected_interaction": 3,
+  "expected_frame_size": 120,
+  "expected_codec": 2,
+  "expected_sample_rate": 16000.0
+}

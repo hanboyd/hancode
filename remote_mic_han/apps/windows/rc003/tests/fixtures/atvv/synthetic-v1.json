@@ -1,11 +1,14 @@
 {
   "source": "synthetic; contains no captured device or voice data",
+  "fixture_kind": "capabilities_v1_and_adpcm",
+  "description": "v1 capabilities + a 4-byte ADPCM stream; minimal mixed fixture from Phase 0",
   "capabilities_hex": "0b010002030078",
   "expected_version": 256,
+  "expected_codecs": 2,
+  "expected_interaction": 3,
+  "expected_frame_size": 120,
   "expected_codec": 2,
   "expected_sample_rate": 16000,
-  "expected_frame_size": 120,
   "adpcm_hex": "007f80ff",
   "expected_pcm": [0, 0, 11, -19, -23, -20, -72, -184]
 }
-
