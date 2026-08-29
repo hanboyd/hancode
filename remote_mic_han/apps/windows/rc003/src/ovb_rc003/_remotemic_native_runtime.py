@@ -38,7 +38,17 @@ T = TypeVar("T")
 
 # Default policy. Empty by design: every module is "python" until an
 # explicit opt-in is added here (or via env var) for that module.
-_DEFAULT_CHOICES: dict[str, ImplementationChoice] = {}
+#
+# ``atvv_protocol`` is the first side-effect-free compute module to
+# register (Phase 2 / Area 1, ADR-0012 §6). The default stays
+# ``"python"`` here per the migration plan §1 rule 4; only the env
+# override or a shadow parity test selects ``"shadow"``. The entry
+# below exists so a typo in the env var name (``..._ATVV_PROTO`` vs
+# ``..._ATVV_PROTOCOL``) fails loud at ``implementation_choice`` rather
+# than silently falling back to python.
+_DEFAULT_CHOICES: dict[str, ImplementationChoice] = {
+    "atvv_protocol": "python",
+}
 
 _ENV_PREFIX = "REMOTEMIC_NATIVE_CHOICE_"
 _VALID_CHOICES: frozenset[str] = frozenset(("python", "native", "shadow"))
