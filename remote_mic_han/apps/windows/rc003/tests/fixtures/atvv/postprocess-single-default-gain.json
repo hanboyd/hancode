@@ -1,0 +1,13 @@
+{
+  "description": "Single sample [100] with default gain 10 dB. len < 3 -> no 3-tap smoothing. gain = 10^(10/20) ~= 3.162. Scaled = round(100 * 3.162) = 316.",
+  "function": "postprocess",
+  "samples": [
+    100
+  ],
+  "gain_db": 10.0,
+  "expected_output": [
+    316
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

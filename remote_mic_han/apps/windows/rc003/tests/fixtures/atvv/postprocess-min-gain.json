@@ -1,0 +1,19 @@
+{
+  "description": "4 samples with gain_db=-24.0 (min). gain = 10^(-24/20) ~= 0.0631. Same smoothing then scaled down.",
+  "function": "postprocess",
+  "samples": [
+    1000,
+    2000,
+    3000,
+    4000
+  ],
+  "gain_db": -24.0,
+  "expected_output": [
+    63,
+    126,
+    189,
+    252
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

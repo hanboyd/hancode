@@ -1,0 +1,21 @@
+{
+  "description": "5 samples with gain_db=0.0 -> gain=1.0. 3-tap smoothing: filtered[1]=(1+2*2+3)/4=2, filtered[2]=(2+2*3+4)/4=3, filtered[3]=(3+2*4+5)/4=4. Endpoints stay as input.",
+  "function": "postprocess",
+  "samples": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "gain_db": 0.0,
+  "expected_output": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

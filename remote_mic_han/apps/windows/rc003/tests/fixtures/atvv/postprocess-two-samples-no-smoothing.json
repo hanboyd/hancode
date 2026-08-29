@@ -1,0 +1,15 @@
+{
+  "description": "Two samples (len < 3) -> 3-tap smoothing skipped. Output is the input scaled by gain=1.0 (gain_db=0.0): [1000, 2000].",
+  "function": "postprocess",
+  "samples": [
+    1000,
+    2000
+  ],
+  "gain_db": 0.0,
+  "expected_output": [
+    1000,
+    2000
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

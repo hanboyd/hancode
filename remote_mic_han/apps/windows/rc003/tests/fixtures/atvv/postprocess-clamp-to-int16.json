@@ -1,0 +1,17 @@
+{
+  "description": "3 samples [30000, 30000, 30000] with gain_db=24.0 -> scaled ~ 475389, far above int16 max. Output clamps to +32767.",
+  "function": "postprocess",
+  "samples": [
+    30000,
+    30000,
+    30000
+  ],
+  "gain_db": 24.0,
+  "expected_output": [
+    32767,
+    32767,
+    32767
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

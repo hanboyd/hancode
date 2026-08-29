@@ -1,0 +1,12 @@
+{
+  "description": "Single sample [100]; filter self-initializes on the first sample. Output equals input by construction (no previous input/output).",
+  "function": "DcHighPassFilter.process",
+  "samples": [
+    100
+  ],
+  "expected_filtered": [
+    0
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

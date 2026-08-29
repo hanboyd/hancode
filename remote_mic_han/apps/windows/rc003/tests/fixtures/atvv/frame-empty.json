@@ -1,0 +1,10 @@
+{
+  "description": "Empty data, frame_size=120 -> empty frame list.",
+  "function": "FrameAccumulator.append",
+  "data_hex": "",
+  "frame_size": 120,
+  "append_count": 1,
+  "expected_frames_hex": [],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

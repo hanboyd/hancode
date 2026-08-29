@@ -1,0 +1,10 @@
+{
+  "description": "5 bytes (< frame_size 120) -> empty list. Bytes remain pending for the next append.",
+  "function": "FrameAccumulator.append",
+  "data_hex": "0102030405",
+  "frame_size": 120,
+  "append_count": 1,
+  "expected_frames_hex": [],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

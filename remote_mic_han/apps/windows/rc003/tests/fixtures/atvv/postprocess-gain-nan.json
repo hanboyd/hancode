@@ -1,0 +1,19 @@
+{
+  "description": "gain_db=NaN -> finite_gain_db=0.0 (NaN check in Python baseline); gain = 10^0 = 1.0. Output is just the 3-tap smoothing.",
+  "function": "postprocess",
+  "samples": [
+    10,
+    20,
+    30,
+    40
+  ],
+  "gain_db": "NaN",
+  "expected_output": [
+    10,
+    20,
+    30,
+    40
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

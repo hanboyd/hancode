@@ -1,0 +1,13 @@
+{
+  "description": "25 bytes, frame_size=10 -> 2 complete frames (bytes 0..9 and 10..19) + 5 bytes pending. Returns 2 frame hex strings.",
+  "function": "FrameAccumulator.append",
+  "data_hex": "000102030405060708090a0b0c0d0e0f101112131415161718",
+  "frame_size": 10,
+  "append_count": 1,
+  "expected_frames_hex": [
+    "00010203040506070809",
+    "0a0b0c0d0e0f10111213"
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}

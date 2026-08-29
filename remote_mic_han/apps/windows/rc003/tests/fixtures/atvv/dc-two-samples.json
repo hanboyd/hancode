@@ -1,0 +1,14 @@
+{
+  "description": "Two samples [100, 200]; second sample uses alpha = exp(-2*pi*20/16000) ~= 0.99221. Output[1] = current - prev_input + alpha * prev_output = 200 - 100 + alpha * 100 = 100 + 99.221 = 199.221.",
+  "function": "DcHighPassFilter.process",
+  "samples": [
+    100,
+    200
+  ],
+  "expected_filtered": [
+    0,
+    100
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol via _gen_area4_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "area4"
+}
