@@ -35,6 +35,45 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# ATVV / ADPCM pure logic (Phase 2, per ADR-0012).
+# No <windows.h>, no <fstream>, no env-var reads, no filesystem writes.
+# Header-only contracts live under include/remotemic/atvv/ and
+# include/remotemic/adpcm/; implementations under src/atvv/ and
+# src/adpcm/. nlohmann::json is the ONLY C++ dependency added in
+# Phase 2 (used by tests to read the golden JSON fixtures shared
+# with the Python side); see ADR-0012 §4 / §7.
+# ---------------------------------------------------------------------------
+include(FetchContent)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
+add_library(remotemic_atvv STATIC
+    src/atvv/capabilities.cpp
+)
+
+target_include_directories(remotemic_atvv
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(remotemic_atvv
+    PUBLIC nlohmann_json::nlohmann_json
+)
+
+target_compile_features(remotemic_atvv PUBLIC cxx_std_20)
+
+if(MSVC)
+    target_compile_options(remotemic_atvv PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_atvv PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ---------------------------------------------------------------------------
 # Win32 platform layer: filesystem, env, logger, Application::diagnose.
 # May include <windows.h> and other OS headers. Consumes remotemic_core.
 # ---------------------------------------------------------------------------
@@ -82,6 +121,26 @@ if(REMOTEMIC_BUILD_TESTS)
         target_compile_options(remotemic_unit_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME remotemic_unit_tests COMMAND remotemic_unit_tests)
+
+    # Phase 2 / Area 1 TDD red state: stub returns std::nullopt, so
+    # the three reject fixtures pass and the five valid fixtures
+    # fail. This is intentional; step 3 implements the real parser.
+    # See ADR-0012 §3 / §8 and tests/unit/test_atvv_capabilities.cpp.
+    add_executable(remotemic_atvv_tests tests/unit/test_atvv_capabilities.cpp)
+    target_link_libraries(remotemic_atvv_tests PRIVATE remotemic_atvv)
+    if(MSVC)
+        target_compile_options(remotemic_atvv_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_atvv_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_atvv_tests COMMAND remotemic_atvv_tests)
+    # The JSON fixtures live in the source tree; the test walks up
+    # from CTest's WORKING_DIRECTORY (= build dir) to find them. Setting
+    # an explicit WORKING_DIRECTORY at the source root keeps the path
+    # lookup short and deterministic.
+    set_tests_properties(remotemic_atvv_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
 
     if(REMOTEMIC_BUILD_PYTHON)
         add_test(

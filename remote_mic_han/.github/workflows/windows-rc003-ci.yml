@@ -54,6 +54,9 @@ on:
       # any of these must re-run the C++ build + CTest gate below so the
       # pybind11 extension, the four-category binding smoke, and the
       # module-level switch framework cannot silently break.
+      # Phase 2 (ADR-0012) extends the same gate to the ATVV / ADPCM
+      # pure-logic tree and its shared JSON golden fixtures so the new
+      # remotemic_atvv_tests CTest target cannot silently break.
       - "CMakeLists.txt"
       - "src/bind/**"
       - "include/remotemic/bind/**"
@@ -61,10 +64,16 @@ on:
       - "src/app/**"
       - "src/logging/**"
       - "src/platform/**"
+      - "src/atvv/**"
+      - "src/adpcm/**"
+      - "include/remotemic/atvv/**"
+      - "include/remotemic/adpcm/**"
       - "tests/unit/**"
       - "tests/bind/**"
+      - "apps/windows/rc003/tests/fixtures/atvv/**"
       - "docs/architecture/cpp-migration-execution-plan.md"
       - "docs/decisions/ADR-0011-**"
+      - "docs/decisions/ADR-0012-**"
   pull_request:
     paths:
       - "apps/windows/rc003/**"
@@ -81,10 +90,16 @@ on:
       - "src/app/**"
       - "src/logging/**"
       - "src/platform/**"
+      - "src/atvv/**"
+      - "src/adpcm/**"
+      - "include/remotemic/atvv/**"
+      - "include/remotemic/adpcm/**"
       - "tests/unit/**"
       - "tests/bind/**"
+      - "apps/windows/rc003/tests/fixtures/atvv/**"
       - "docs/architecture/cpp-migration-execution-plan.md"
       - "docs/decisions/ADR-0011-**"
+      - "docs/decisions/ADR-0012-**"
 
 permissions:
   contents: read
