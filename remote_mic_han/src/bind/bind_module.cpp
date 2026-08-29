@@ -6,6 +6,7 @@
 #include "remotemic/bind/probe_types.hpp"
 #include "remotemic/atvv/capabilities.hpp"
 #include "remotemic/atvv/control.hpp"
+#include "remotemic/adpcm/ima_decoder.hpp"
 
 #include <variant>
 
@@ -249,4 +250,38 @@ PYBIND11_MODULE(_C, m) {
         "produces b'\\x0d' followed by session_id; legacy produces\n"
         "just b'\\x0d' (session_id ignored)."
     );
+
+    // ------------------------------------------------------------------
+    // 7. IMA/DVI ADPCM decoder (Phase 2 / Area 3, ADR-0012)
+    //    Stateful value type matching
+    //    apps/windows/rc003/src/ovb_rc003/atvv_protocol.py:158-207.
+    //    Each Python instance owns its own decoder; the binding does
+    //    not share state across instances. State is exposed via
+    //    reset(predictor, step_index) + decode(data) + read-only
+    //    predictor/step_index accessors.
+    // ------------------------------------------------------------------
+    py::class_<adpcm::ImaDecoder>(m, "ImaDecoder")
+        .def(py::init<>(),
+             "Construct a decoder with predictor=0, step_index=0.")
+        .def("reset",
+             &adpcm::ImaDecoder::reset,
+             py::arg("predictor") = 0,
+             py::arg("step_index") = 0,
+             "Reset predictor and step_index. predictor is clamped\n"
+             "to [-32768, 32767] and step_index to [0, 88].")
+        .def("decode",
+             [](adpcm::ImaDecoder& self, py::bytes data) {
+                 const std::string_view view = data;
+                 std::span<const std::uint8_t> bytes(
+                     reinterpret_cast<const std::uint8_t*>(view.data()),
+                     view.size());
+                 return self.decode(bytes);
+             },
+             py::arg("data"),
+             "Decode a byte stream; returns 2 * len(data) samples.\n"
+             "High nibble is decoded first per byte.")
+        .def_property_readonly("predictor",
+                               &adpcm::ImaDecoder::predictor)
+        .def_property_readonly("step_index",
+                               &adpcm::ImaDecoder::step_index);
 }

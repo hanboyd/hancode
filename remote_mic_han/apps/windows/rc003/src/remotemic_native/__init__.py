@@ -18,6 +18,7 @@ try:
         VersionInfo,
         Counter,
         AtvvCapabilities,
+        ImaDecoder,
         atvv_capabilities_parse,
         atvv_control_parse,
         atvv_mic_open_command,
@@ -40,6 +41,7 @@ except ImportError:
     VersionInfo = None  # type: ignore[assignment,misc]
     Counter = None  # type: ignore[assignment,misc]
     AtvvCapabilities = None  # type: ignore[assignment,misc]
+    ImaDecoder = None  # type: ignore[assignment,misc]
     probe_value_type = None  # type: ignore[assignment,misc]
     probe_shared_ptr = None  # type: ignore[assignment,misc]
     probe_callback = None  # type: ignore[assignment,misc]
@@ -62,6 +64,7 @@ __all__ = [
     "VersionInfo",
     "Counter",
     "AtvvCapabilities",
+    "ImaDecoder",
     "atvv_capabilities_parse",
     "atvv_control_parse",
     "atvv_mic_open_command",
