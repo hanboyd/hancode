@@ -12,6 +12,8 @@
 /.vscode/
 /cmake-build-*/
 CMakeUserPresets.json
+# CTest scratch (created when ctest is run without --test-dir)
+/Testing/
 
 # Generated runtime/test data
 *.log

@@ -50,6 +50,21 @@ on:
       - "THIRD_PARTY_NOTICES.md"
       - "device-profiles/xiaomi-rc003.json"
       - "device-profiles/dji-mic-2.json"
+      # Phase 1 C++ / CPython migration scaffold (ADR-0011). A change to
+      # any of these must re-run the C++ build + CTest gate below so the
+      # pybind11 extension, the four-category binding smoke, and the
+      # module-level switch framework cannot silently break.
+      - "CMakeLists.txt"
+      - "src/bind/**"
+      - "include/remotemic/bind/**"
+      - "include/remotemic/interfaces/**"
+      - "src/app/**"
+      - "src/logging/**"
+      - "src/platform/**"
+      - "tests/unit/**"
+      - "tests/bind/**"
+      - "docs/architecture/cpp-migration-execution-plan.md"
+      - "docs/decisions/ADR-0011-**"
   pull_request:
     paths:
       - "apps/windows/rc003/**"
@@ -59,6 +74,17 @@ on:
       - "THIRD_PARTY_NOTICES.md"
       - "device-profiles/xiaomi-rc003.json"
       - "device-profiles/dji-mic-2.json"
+      - "CMakeLists.txt"
+      - "src/bind/**"
+      - "include/remotemic/bind/**"
+      - "include/remotemic/interfaces/**"
+      - "src/app/**"
+      - "src/logging/**"
+      - "src/platform/**"
+      - "tests/unit/**"
+      - "tests/bind/**"
+      - "docs/architecture/cpp-migration-execution-plan.md"
+      - "docs/decisions/ADR-0011-**"
 
 permissions:
   contents: read
@@ -172,6 +198,52 @@ jobs:
         shell: pwsh
         run: |
           ./build/fetch-vb-cable.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Phase 1 C++ / CPython migration scaffold (ADR-0011): C++ core
+      # build + CTest gate (Debug + Release). Builds the pure core static
+      # library, the Win32 platform static library, the CLI executable,
+      # the unit-test executable, and (with REMOTEMIC_BUILD_PYTHON=ON)
+      # the pybind11 Python extension module. Runs CTest for both
+      # configurations; `remotemic_bind_smoke` is one of those tests and
+      # exercises value-type / shared_ptr / py::function callback / all
+      # four error categories in the frozen ABI the PyInstaller step below
+      # then bundles. The Release build's `.pyd` lands at the exact path
+      # build/RemoteMicRC003.spec expects
+      # (build/python/Release/remotemic_native.cp311-win_amd64.pyd).
+      #
+      # Never touches an installed RC003, an audio endpoint, a paired
+      # Bluetooth device, or the user's machine state. Fails the whole
+      # job closed if cmake configure, either config's build, or either
+      # config's CTest run returns nonzero.
+      - name: C++ core build + CTest (Debug + Release)
+        shell: pwsh
+        timeout-minutes: 30
+        working-directory: ${{ github.workspace }}
+        run: |
+          $cmake = (Get-Command cmake -ErrorAction SilentlyContinue)?.Source
+          if (-not $cmake) {
+            $bundled = "C:\VSBuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+            if (-not (Test-Path $bundled)) {
+              Write-Error "cmake not found on PATH and not at the VSBuildTools default path; install the Visual Studio C++ build tools workload"
+              exit 1
+            }
+            $cmake = $bundled
+          }
+
+          # Configure once for both configs (Visual Studio generator is
+          # multi-config). Output lands at build/python/{Debug,Release}/.
+          & $cmake -S . -B build/python -A x64 -DREMOTEMIC_BUILD_PYTHON=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $cmake --build build/python --config Debug --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $cmake --build build/python --target RUN_TESTS --config Debug
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $cmake --build build/python --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $cmake --build build/python --target RUN_TESTS --config Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: PyInstaller build (unsigned candidate)

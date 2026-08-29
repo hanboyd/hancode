@@ -114,6 +114,80 @@ def _dry_run() -> int:
     )
 
     print("dry-run: all ovb_rc003 modules imported successfully")
+
+    # Phase 1 migration scaffold (ADR-0011): probe the native extension if
+    # bundled, and exercise the four ADR-mandated translation paths. A
+    # missing native module is reported but does NOT fail the smoke check:
+    # the Python implementation is the authoritative fallback until phase 8.
+    # We branch on ``_C_AVAILABLE`` (not import success) because the public
+    # ``remotemic_native`` wrapper imports cleanly even when ``_C.pyd`` is
+    # absent - it just degrades to ``None`` sentinels. Only ``_C_AVAILABLE``
+    # distinguishes a real native load from a stripped / never-built state.
+    _rn = None
+    try:
+        import remotemic_native as _rn  # type: ignore[assignment]
+    except ImportError as _exc:
+        print(
+            f"dry-run: remotemic_native not available, falling back to "
+            f"python implementation ({type(_exc).__name__}: {_exc})"
+        )
+
+    _native_loaded = _rn is not None and getattr(_rn, "_C_AVAILABLE", False)
+
+    if not _native_loaded:
+        # Gate 3 redo: the fallback path must still EXECUTE a real piece of
+        # product code (the existing Python ATVV capability parse) so the
+        # smoke proves the fallback is functionally complete, not just that
+        # Python refuses to crash. A missing native module is therefore
+        # not a synonym for "nothing else runs": the Python baseline
+        # remains the authoritative implementation until phase 8, and
+        # calling it here is the only way to prove _that_ path still works
+        # after the native scaffold is removed/restored.
+        if _rn is not None:
+            print(
+                f"dry-run: remotemic_native present but _C.pyd unavailable "
+                f"(version={_rn.__version__!r}), falling back to python"
+            )
+        # Synthetic v1 capability notification (version=0x0100, codecs=0x02,
+        # interaction=0x03, frame_size=120) — same shape test_atvv_protocol
+        # exercises; proves the Python baseline parses it end-to-end.
+        _synthetic_caps = bytes((0x0B, 0x01, 0x00, 0x02, 0x03, 0x00, 0x78))
+        _parsed = atvv_protocol.ATVVCapabilities.parse(_synthetic_caps)
+        if _parsed is None:
+            print("dry-run: python ATVV fallback parse FAILED on synthetic caps")
+            return 1
+        print(
+            f"dry-run: python ATVV fallback parse ok "
+            f"version=0x{_parsed.version:04x} "
+            f"selected_codec=0x{_parsed.selected_codec:02x} "
+            f"sample_rate={_parsed.sample_rate:.0f} "
+            f"frame_size={_parsed.frame_size}"
+        )
+    else:
+        print(f"dry-run: remotemic_native.__version__={_rn.__version__}")
+        _info = _rn.probe_value_type()
+        print(
+            f"dry-run: native probe product={_info.product} "
+            f"version={_info.version} build_number={_info.build_number}"
+        )
+        _counter = _rn.probe_shared_ptr()
+        _counter.increment(3)
+        print(f"dry-run: native probe counter.value={_counter.value()}")
+        _rn.probe_callback(lambda x: print(f"dry-run: native probe callback fired with {x}"))
+        for _code in (
+            _rn.ErrorCode.InvalidArgument,
+            _rn.ErrorCode.NotFound,
+            _rn.ErrorCode.Timeout,
+            _rn.ErrorCode.Internal,
+        ):
+            try:
+                _rn.probe_throw(_code)
+            except RuntimeError as _err:
+                print(f"dry-run: native probe error code={int(_code)} translated ok")
+            else:
+                print(f"dry-run: native probe error code={int(_code)} unexpectedly returned")
+                return 1
+
     return 0
 
 
@@ -136,7 +210,7 @@ def _run_bridge() -> None:
     exit rather than silently disappearing.
     """
 
-    from . import app, config, device_catalog, single_instance
+    from . import app, bridge_control_windows, config, device_catalog, single_instance
 
     selected_device_id = device_catalog.normalize_device_id(
         config.load_config(config.config_path()).get("selected_device_profile")
@@ -150,8 +224,12 @@ def _run_bridge() -> None:
         return
 
     try:
-        with single_instance.BridgeInstanceGuard():
-            app.main()
+        # The stop event encloses the mutex guard so it disappears only after
+        # the old bridge has released its single-instance lock. Settings can
+        # therefore wait for one object instead of racing a replacement launch.
+        with bridge_control_windows.BridgeStopSignal() as stop_signal:
+            with single_instance.BridgeInstanceGuard():
+                app.main(stop_signal)
     except single_instance.DuplicateInstanceError as exc:
         single_instance.show_bridge_startup_blocked_notice(str(exc))
         raise SystemExit(single_instance.DUPLICATE_INSTANCE_EXIT_CODE)

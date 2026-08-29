@@ -26,6 +26,19 @@ REMOTE_PHOTO = REPO_ROOT / "Resources" / "RC003-remote-photo.png"
 APP_ICON = REPO_ROOT / "Resources" / "RemoteMic-AppIcon.ico"
 QML_SOURCE_DIR = SRC_ROOT / "ovb_rc003" / "qml"
 DEVICE_PROFILES_DIR = REPO_ROOT / "device-profiles"
+# Phase 1 C++/CPython migration scaffold (ADR-0011). The native extension
+# is built by the top-level CMake build (cmake -S . -B build/python -A x64
+# -DREMOTEMIC_BUILD_PYTHON=ON) into the package directory
+# ``build/python/Release/remotemic_native/`` containing ``_C.cp311-win_amd64.pyd``
+# next to the staged ``__init__.py`` wrapper. The whole directory is
+# collected so ``import remotemic_native._C`` resolves to
+# ``sys._MEIPASS/remotemic_native/_C.pyd`` - a single bare ``_C.pyd`` at
+# the COLLECT root would violate the ADR-0011 contract (public package
+# wraps private extension). Missing on purpose is non-fatal: the Python
+# implementation is the authoritative fallback until phase 8.
+REMOTEMIC_NATIVE_PKG = (
+    REPO_ROOT / "build" / "python" / "Release" / "remotemic_native"
+)
 # XRBM-031: build/fetch-vb-cable.ps1 (a REQUIRED step in both
 # build-candidate.ps1 and windows-rc003-ci.yml, run before this spec) writes
 # the hash-verified official VB-CABLE base package here. Bundled unmodified
@@ -65,6 +78,21 @@ if DEVICE_PROFILES_DIR.is_dir():
     # sys._MEIPASS/device-profiles and fails closed if they are absent or
     # invalid; no generated/hard-coded duplicate is bundled.
     datas.append((str(DEVICE_PROFILES_DIR), "device-profiles"))
+if REMOTEMIC_NATIVE_PKG.is_dir() and (
+    REMOTEMIC_NATIVE_PKG / "_C.cp311-win_amd64.pyd"
+).is_file():
+    # Collect the whole ``remotemic_native/`` package directory so the
+    # public wrapper (``__init__.py``) and the private ``_C.pyd`` stay
+    # co-located at ``sys._MEIPASS/remotemic_native/`` - matching the
+    # import shape product code expects and what ADR-0011 mandates
+    # (line 50-51: "public Python package ``remotemic_native`` wraps
+    # ``_C`` and is the only symbol importable from product code").
+    # PyInstaller's static Analysis already pulls in any ``ovb_rc003``
+    # Python module it sees; this entry adds the compiled extension and
+    # the wrapper that never shows up via Python's static import graph
+    # (it is only imported under the env-controlled module switch, see
+    # apps/windows/rc003/src/ovb_rc003/_remotemic_native_runtime.py).
+    datas.append((str(REMOTEMIC_NATIVE_PKG), "remotemic_native"))
 if VB_CABLE_BUNDLE_ZIP.is_file():
     # Collected under "vb_cable_bundle" inside the COLLECT output, matching
     # vb_cable_bundle.py's _candidate_bundle_paths(), which looks under
@@ -131,6 +159,15 @@ hiddenimports = [
     "PySide6.QtQml",
     "PySide6.QtQuick",
     "PySide6.QtQuickControls2",
+    # Phase 1 C++/CPython scaffold (ADR-0011): no Python module imports
+    # ``remotemic_native`` directly (it's reached via the env-controlled
+    # module switch in _remotemic_native_runtime.py, which ``ovb_rc003``
+    # never calls at module load time), so PyInstaller's static analysis
+    # cannot discover it. Without this hiddenimport, the frozen exe would
+    # pass analysis and then crash the first time the runtime switch
+    # selects ``native`` and Python tries to import the package. The
+    # compiled ``_C.pyd`` is supplied via the ``datas=`` entry above.
+    "remotemic_native",
 ]
 
 a = Analysis(
