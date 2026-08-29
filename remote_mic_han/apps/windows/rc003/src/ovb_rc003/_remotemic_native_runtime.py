@@ -50,6 +50,7 @@ _DEFAULT_CHOICES: dict[str, ImplementationChoice] = {
     "atvv_protocol": "python",
     "atvv_control_parse": "python",
     "atvv_control_encode": "python",
+    "adpcm_ima_decode": "python",
 }
 
 _ENV_PREFIX = "REMOTEMIC_NATIVE_CHOICE_"

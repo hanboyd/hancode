@@ -160,9 +160,54 @@ mic_close_command = choose_implementation(
 )
 
 
+# ---------------------------------------------------------------------------
+# IMA/DVI ADPCM decoder (Phase 2 / Area 3, ADR-0012 section 3 / section 6)
+# ---------------------------------------------------------------------------
+# The decoder is a stateful value type, but shadow parity is straightforward
+# because every call creates a fresh decoder. The ``predictor`` and
+# ``step_index`` arguments let callers prime the decoder exactly the way
+# ``atvv_session.handle_audio`` does (AUDIO_SYNC path: reset(predictor,
+# step_index) before the first frame). The return value is a freshly
+# allocated list[int] / vector<int16_t>; no shared state survives across
+# calls, so shadow mode is safe.
+
+
+def _decode_adpcm_frame_python(
+    data: bytes, predictor: int = 0, step_index: int = 0
+) -> list:
+    decoder = proto.IMAADPCMDecoder()
+    decoder.reset(predictor, step_index)
+    return decoder.decode(data)
+
+
+def _decode_adpcm_frame_native(
+    data: bytes, predictor: int = 0, step_index: int = 0
+) -> list:
+    import remotemic_native as _rn  # type: ignore[import-not-found]
+
+    if not _rn._C_AVAILABLE:
+        return _decode_adpcm_frame_python(data, predictor, step_index)
+    decoder = _rn.ImaDecoder()
+    decoder.reset(predictor, step_index)
+    return list(decoder.decode(data))
+
+
+decode_adpcm_frame_python = _decode_adpcm_frame_python
+decode_adpcm_frame_native = _decode_adpcm_frame_native
+
+
+decode_adpcm_frame = choose_implementation(
+    "adpcm_ima_decode",
+    python_impl=decode_adpcm_frame_python,
+    native_impl=decode_adpcm_frame_native,
+    side_effect_free=True,
+)
+
+
 __all__ = [
     "parse_capabilities",
     "parse_control",
     "mic_open_command",
     "mic_close_command",
+    "decode_adpcm_frame",
 ]
