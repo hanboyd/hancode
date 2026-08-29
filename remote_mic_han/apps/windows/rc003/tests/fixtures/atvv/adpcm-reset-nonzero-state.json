@@ -1,0 +1,17 @@
+{
+  "description": "reset(1000, 30) then 2 bytes 0x44 0x66. Exercises the AUDIO_SYNC pathway where the decoder is primed by an explicit predictor + step_index before the first audio frame. The non-zero start state means the same input bytes would produce different samples compared to reset(0, 0).",
+  "reset": {
+    "predictor": 1000,
+    "step_index": 30
+  },
+  "input_hex": "4466",
+  "expected_pcm": [
+    1146,
+    1322,
+    1630,
+    2177
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol.IMAADPCMDecoder via _gen_adpcm_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "adpcm_decode",
+  "function": "ImaDecoder.decode"
+}

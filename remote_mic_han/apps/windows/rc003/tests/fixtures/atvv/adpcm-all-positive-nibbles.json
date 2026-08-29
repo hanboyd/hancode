@@ -1,0 +1,17 @@
+{
+  "description": "2 bytes 0x66 0x66 -> 4 nibbles all set to 6 (sign=0, code=6 -> positive diff step*1.75). Predictor rises monotonically.",
+  "reset": {
+    "predictor": 0,
+    "step_index": 0
+  },
+  "input_hex": "6666",
+  "expected_pcm": [
+    10,
+    30,
+    66,
+    132
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol.IMAADPCMDecoder via _gen_adpcm_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "adpcm_decode",
+  "function": "ImaDecoder.decode"
+}

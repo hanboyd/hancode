@@ -1,0 +1,21 @@
+{
+  "description": "4-byte stream 007f80ff with reset(0, 0). Mirrors the Phase 0 mixed fixture's ADPCM half (synthetic-v1.json); regenerated here as a standalone adpcm_decode fixture.",
+  "reset": {
+    "predictor": 0,
+    "step_index": 0
+  },
+  "input_hex": "007f80ff",
+  "expected_pcm": [
+    0,
+    0,
+    11,
+    -19,
+    -23,
+    -20,
+    -72,
+    -184
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol.IMAADPCMDecoder via _gen_adpcm_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "adpcm_decode",
+  "function": "ImaDecoder.decode"
+}

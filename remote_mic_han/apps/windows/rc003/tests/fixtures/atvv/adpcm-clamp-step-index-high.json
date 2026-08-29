@@ -1,0 +1,29 @@
+{
+  "description": "reset(0, 0) then 8 bytes of 0x07 (each nibble=7 -> step_index increments by 8, clamped at 88). Exercises the step_index clamp at the high end.",
+  "reset": {
+    "predictor": 0,
+    "step_index": 0
+  },
+  "input_hex": "0707070707070707",
+  "expected_pcm": [
+    0,
+    11,
+    13,
+    38,
+    41,
+    93,
+    100,
+    201,
+    215,
+    414,
+    442,
+    833,
+    889,
+    1654,
+    1763,
+    3255
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol.IMAADPCMDecoder via _gen_adpcm_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "adpcm_decode",
+  "function": "ImaDecoder.decode"
+}

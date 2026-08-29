@@ -1,0 +1,29 @@
+{
+  "description": "16-sample synthetic ramp (modulo bounded) encoded with the independent reference encoder, then decoded back. The encoder and decoder are self-consistent byte-exact per ADR-0012 \u00a75 (no tolerance).",
+  "reset": {
+    "predictor": 0,
+    "step_index": 0
+  },
+  "input_hex": "ffffff8101011111",
+  "expected_pcm": [
+    -11,
+    -41,
+    -104,
+    -240,
+    -533,
+    -1164,
+    -1254,
+    -1008,
+    -934,
+    -730,
+    -669,
+    -501,
+    -348,
+    -210,
+    -84,
+    30
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol.IMAADPCMDecoder via _gen_adpcm_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "adpcm_decode",
+  "function": "ImaDecoder.decode"
+}

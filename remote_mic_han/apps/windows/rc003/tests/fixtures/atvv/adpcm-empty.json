@@ -1,0 +1,8 @@
+{
+  "description": "Empty ADPCM byte stream; decode() returns []. Boundary case for the inner loop.",
+  "input_hex": "",
+  "expected_pcm": [],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol.IMAADPCMDecoder via _gen_adpcm_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "adpcm_decode",
+  "function": "ImaDecoder.decode"
+}

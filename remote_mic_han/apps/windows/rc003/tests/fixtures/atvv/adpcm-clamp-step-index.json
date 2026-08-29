@@ -1,0 +1,29 @@
+{
+  "description": "Two streams back-to-back: reset(0, 88) then 8 bytes of 0x00 (each nibble=0 -> step_index decrements by 1, clamped at 0); then reset(0, 0) then 8 bytes of 0x07 (each nibble=7 -> step_index increments by 8, clamped at 88). Exercises the step_index clamp at both ends.",
+  "reset": {
+    "predictor": 0,
+    "step_index": 88
+  },
+  "input_hex": "0000000000000000",
+  "expected_pcm": [
+    4095,
+    7819,
+    11204,
+    14281,
+    17079,
+    19622,
+    21934,
+    24036,
+    25947,
+    27684,
+    29263,
+    30698,
+    32003,
+    32767,
+    32767,
+    32767
+  ],
+  "source": "synthetic; generated from ovb_rc003.atvv_protocol.IMAADPCMDecoder via _gen_adpcm_fixtures.py; contains no captured device or voice data",
+  "fixture_kind": "adpcm_decode",
+  "function": "ImaDecoder.decode"
+}
