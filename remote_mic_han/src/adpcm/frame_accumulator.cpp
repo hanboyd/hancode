@@ -46,10 +46,10 @@ std::vector<std::vector<std::uint8_t>> FrameAccumulator::append(
             pending_.begin() + static_cast<std::ptrdiff_t>(target));
     }
     // Post-condition (ADR-0012 Phase 2 / Area 4 step 4 invariant):
-    // after a successful append with frame_size > 0 the pending
-    // remainder is always strictly less than frame_size, because
-    // the while loop above drains frames of exactly frame_size
-    // bytes until pending_.size() < target.
+    // pending_size_ < frame_size <= 65535. The lower bound "<" holds
+    // because the while loop above drains frames of exactly
+    // frame_size bytes until fewer bytes remain. The upper bound
+    // "<= 65535" follows directly from the std::uint16_t type.
     return out;
 }
 

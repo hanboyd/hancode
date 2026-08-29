@@ -338,22 +338,61 @@ PYBIND11_MODULE(_C, m) {
         .def("append",
              [](adpcm::FrameAccumulator& self,
                 py::bytes data,
-                std::uint16_t frame_size) {
+                py::int_ frame_size_py) {
                  const std::string_view view = data;
                  std::span<const std::uint8_t> bytes(
                      reinterpret_cast<const std::uint8_t*>(view.data()),
                      view.size());
-                 return self.append(bytes, frame_size);
+                 // Per ADR-0012 section 3.1, the public API contract
+                 // at the Python/native seam is:
+                 //   frame_size <= 0       -> no-op ([] returned,
+                 //                              pending untouched)
+                 //   1..65535              -> protocol valid; narrow
+                 //                              to std::uint16_t and
+                 //                              delegate to C++
+                 //   > 65535               -> explicit TypeError
+                 //                              rejection (the
+                 //                              protocol domain cap;
+                 //                              not silently wrapped)
+                 // The C++ core FrameAccumulator::append keeps its
+                 // std::uint16_t signature unchanged; the binding
+                 // layer is the one place where Python ints of any
+                 // sign are normalized into the protocol contract.
+                 const long long fs = frame_size_py.cast<long long>();
+                 if (fs <= 0) {
+                     // Hard no-op. We MUST NOT touch self in this
+                     // branch: the contract says "<=0 -> pending
+                     // unchanged". Returning a freshly-constructed
+                     // empty list (not a std::nullopt) so the
+                     // Python side still sees a list, matching the
+                     // Python baseline FrameAccumulator.append
+                     // (atvv_protocol.py:271-279).
+                     return std::vector<std::vector<std::uint8_t>>{};
+                 }
+                 if (fs > 65535) {
+                     PyErr_SetString(
+                         PyExc_TypeError,
+                         "frame_size must be in 1..65535 (uint16_t "
+                         "protocol domain); the value supplied is "
+                         "outside the protocol-valid range.");
+                     throw py::error_already_set();
+                 }
+                 return self.append(
+                     bytes, static_cast<std::uint16_t>(fs));
              },
              py::arg("data"),
              py::arg("frame_size"),
              "Append data and return any complete frames of\n"
              "frame_size bytes; leftover bytes stay pending.\n"
-             "frame_size is std::uint16_t; the protocol-valid\n"
-             "domain is 1..65535. frame_size == 0 returns []\n"
-             "and does NOT buffer the data (matches the Python\n"
-             "baseline). Out-of-range values from Python raise\n"
-             "pybind11's standard OverflowError before the call.")
+             "Public-API contract (ADR-0012 section 3.1):\n"
+             "  frame_size <= 0     no-op; returns [] and does NOT\n"
+             "                      modify pending_size. Matches the\n"
+             "                      Python baseline guard at\n"
+             "                      atvv_protocol.py:272-273.\n"
+             "  1..65535            protocol valid; narrow to uint16_t.\n"
+             "  frame_size > 65535  explicitly rejected with TypeError\n"
+             "                      (the protocol-domain cap; not\n"
+             "                      silently wrapped to a uint16).")
         .def("reset", &adpcm::FrameAccumulator::reset,
              "Discard any pending bytes accumulated from previous\n"
              "calls. After reset() the next append() behaves as if\n"

@@ -13,13 +13,16 @@ In addition to the gold-fixture loop, this smoke verifies:
 
 - ``reset()`` parity: a partial frame in stream A then ``reset()`` then
   stream B does NOT carry over A's bytes into B's emitted frames.
-- ``frame_size`` public boundary: ``< 0``, ``0``, ``1``, ``65535``,
-  ``> 65535``. The observed behavior at the Python/native seam is
-  reported (pybind11 raises ``OverflowError`` for values that do not
-  fit in ``std::uint16_t``; ``0`` is the protocol-invalid no-op; ``1``
-  and ``65535`` are the protocol-valid extremes).
-- Invariant ``0 <= pending_size < frame_size`` after each successful
-  ``append()`` call (and trivially ``0`` after a ``reset()``).
+- ``frame_size`` public boundary: ``<= 0`` (including negative values),
+  ``1``, ``65535``, ``> 65535``. The contract at the Python/native
+  seam per ADR-0012 section 3.1:
+    ``<= 0``   no-op (``[]`` returned, ``pending_size`` unchanged)
+    ``1..65535``  protocol valid; narrows to ``std::uint16_t``
+    ``> 65535``  explicitly rejected with ``TypeError``
+- Invariant ``pending_size < frame_size <= 65535`` after each
+  successful ``append()`` call (the lower bound because the
+  ``append()`` drain loop only emits complete ``frame_size``-byte
+  frames, the upper bound because ``frame_size`` is ``uint16_t``).
 """
 
 from __future__ import annotations
@@ -153,70 +156,107 @@ class AdpcmFrameBindingSmokeTests(unittest.TestCase):
         self.assertEqual(out, [])
         self.assertEqual(acc.pending_size, 65534)
         self.assertLess(acc.pending_size, 65535)
+        self.assertLessEqual(65535, 65535)
 
     def test_boundary_frame_size_zero(self) -> None:
-        # frame_size=0 is the protocol-invalid "no-op" case; the
-        # binding narrows Python's 0 to std::uint16_t (no error)
-        # and the C++ side returns an empty list without buffering
-        # the data (matches the Python baseline's guard).
+        # frame_size=0 is part of the protocol-invalid no-op class.
+        # The binding returns [] without buffering the data and
+        # without touching any previously-pending bytes (matches
+        # the Python baseline's guard at atvv_protocol.py:272-273).
         acc = self.FrameAccumulator()
-        out = list(acc.append(bytes([1, 2, 3, 4, 5]), 0))
+        # Seed 5 bytes of pending so we can prove "no-op" doesn't
+        # touch the buffer.
+        seed = bytes([1, 2, 3, 4, 5])
+        list(acc.append(seed, 10))  # 5 bytes pending
+        self.assertEqual(acc.pending_size, 5)
+        out = list(acc.append(bytes([10, 20, 30, 40, 50]), 0))
         self.assertEqual(out, [], "frame_size=0 must return []")
-        self.assertEqual(acc.pending_size, 0, "frame_size=0 must not buffer")
+        self.assertEqual(acc.pending_size, 5,
+                         "frame_size=0 must not touch existing pending")
 
     def test_boundary_frame_size_negative(self) -> None:
-        # Frame_size=-1 does NOT fit in std::uint16_t. The actual
-        # pybind11 behavior at the public Python/native boundary
-        # is reported (the test does NOT patch or swallow errors).
-        # On the inspected build (pybind11 2.12.0, CPython 3.11)
-        # this raises TypeError("append(): incompatible function
-        # arguments"). The hard assertion uses the broad base
-        # class so a pybind11 minor-version bump that changes the
-        # concrete subclass still passes; the subTest captures the
-        # exact type/message so the report shows what actually
-        # happened on this build.
+        # frame_size=-1 is part of the same no-op class as 0 (both
+        # are <= 0). It MUST return [] and MUST NOT touch pending.
+        # The Python baseline guard at atvv_protocol.py:272-273
+        # covers both 0 and any negative value; the binding layer
+        # matches that.
         acc = self.FrameAccumulator()
-        with self.assertRaises(Exception) as cm:
-            acc.append(b"\x01\x02", -1)
-        with self.subTest("actual_exception_class"):
-            self.assertIsNotNone(cm.exception)
+        seed = bytes([1, 2, 3, 4, 5])
+        list(acc.append(seed, 10))  # 5 bytes pending
+        self.assertEqual(acc.pending_size, 5)
+        out = list(acc.append(bytes([10, 20, 30, 40, 50]), -1))
+        self.assertEqual(out, [], "frame_size=-1 must return []")
+        self.assertEqual(acc.pending_size, 5,
+                         "frame_size=-1 must not touch existing pending")
 
-    def test_boundary_frame_size_above_uint16(self) -> None:
-        # Frame_size=65536 (uint16_t max + 1) does NOT fit either.
-        # Same handling: the binding layer rejects the call before
-        # it reaches the C++ side. See test above for rationale.
+        # A brand-new accumulator on -1 must also be a no-op
+        # (pending_size still 0).
+        fresh = self.FrameAccumulator()
+        out2 = list(fresh.append(b"\x01\x02\x03\x04", -1))
+        self.assertEqual(out2, [])
+        self.assertEqual(fresh.pending_size, 0)
+
+    def test_boundary_frame_size_above_uint16_raises_type_error(self) -> None:
+        # frame_size=65536 (uint16_t max + 1) is the explicit
+        # rejection class. Per ADR-0012 section 3.1 the binding
+        # layer MUST raise TypeError for any value > 65535; data
+        # is not silently wrapped, the call does NOT reach C++,
+        # and existing pending is NOT touched.
+        # We do NOT assert on the full error message string;
+        # only on the exception class. See ADR-0012 3.1.
         acc = self.FrameAccumulator()
-        with self.assertRaises(Exception) as cm:
-            acc.append(b"\x01\x02", 65536)
-        with self.subTest("actual_exception_class"):
-            self.assertIsNotNone(cm.exception)
+        seed = bytes([1, 2, 3, 4, 5])
+        list(acc.append(seed, 10))  # 5 bytes pending
+        self.assertEqual(acc.pending_size, 5)
+        with self.assertRaises(TypeError):
+            acc.append(bytes([10, 20, 30, 40, 50]), 65536)
+        self.assertEqual(acc.pending_size, 5,
+                         "rejected call must not touch existing pending")
 
     def test_invariant_pending_less_than_frame_size(self) -> None:
-        # After every successful append() with frame_size > 0,
-        # 0 <= pending_size < frame_size. After a reset() the
-        # invariant is trivially 0; the next append then carries
-        # the same invariant forward.
+        # After every successful append() with frame_size in the
+        # protocol-valid domain (1..65535), the contract is:
+        #     pending_size < frame_size <= 65535
+        # Both halves are checked below. After a reset() the
+        # invariant is trivially satisfied (pending_size == 0);
+        # the next append then carries the invariant forward.
         acc = self.FrameAccumulator()
         fs = 4
+        self.assertLessEqual(fs, 65535, "frame_size itself <= 65535")
         self.assertEqual(list(acc.append(bytes([1, 2]), fs)), [])
         self.assertLess(acc.pending_size, fs)
+        self.assertLessEqual(acc.pending_size, 65535)
         self.assertEqual(list(acc.append(bytes([3]), fs)), [])
         self.assertLess(acc.pending_size, fs)
+        self.assertLessEqual(acc.pending_size, 65535)
         out = list(acc.append(bytes([4, 5]), fs))
         self.assertEqual(len(out), 1)
         self.assertLess(acc.pending_size, fs)
+        self.assertLessEqual(acc.pending_size, 65535)
         out2 = list(acc.append(bytes([6, 7, 8, 9]), fs))
         # Don't assert exact frame count (depends on leftover from
         # the prior partial append); only assert at least one frame
         # was emitted and the invariant still holds.
         self.assertGreater(len(out2), 0)
         self.assertLess(acc.pending_size, fs)
+        self.assertLessEqual(acc.pending_size, 65535)
         acc.reset()
         self.assertEqual(acc.pending_size, 0)
+        self.assertLess(acc.pending_size, fs)
+        self.assertLessEqual(acc.pending_size, 65535)
         # reset() resets the invariant anchor: a fresh append
         # with new bytes starts the same < frame_size relationship.
         self.assertEqual(list(acc.append(bytes([1, 2, 3]), 5)), [])
         self.assertLess(acc.pending_size, 5)
+        self.assertLessEqual(acc.pending_size, 65535)
+
+        # The protocol-valid upper edge also satisfies the
+        # invariant in both halves.
+        edge = self.FrameAccumulator()
+        out_edge = list(edge.append(bytes([0xA5] * 65534), 65535))
+        self.assertEqual(out_edge, [])
+        self.assertLess(edge.pending_size, 65535)
+        self.assertLessEqual(edge.pending_size, 65535)
 
 
 if __name__ == "__main__":

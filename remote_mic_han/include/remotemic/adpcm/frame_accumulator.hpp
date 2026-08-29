@@ -56,9 +56,12 @@ public:
     // accumulator correctly retains remainders across calls.
     //
     // Invariant (per ADR-0012 Phase 2 / Area 4 step 4):
-    //   0 <= pending_size_ < frame_size  for the value of frame_size
-    //   used in the most recent append() call with frame_size > 0.
-    //   For frame_size == 0 the invariant is trivially 0.
+    //   pending_size_ < frame_size <= 65535
+    // The lower bound "<" holds because the append() loop drains
+    // whole frames of frame_size bytes until fewer bytes remain.
+    // The upper bound "<= 65535" follows directly from the
+    // std::uint16_t type. After a reset() the invariant is
+    // trivially satisfied at the lower edge (pending_size_ == 0).
     std::size_t pending_size() const noexcept;
 
 private:

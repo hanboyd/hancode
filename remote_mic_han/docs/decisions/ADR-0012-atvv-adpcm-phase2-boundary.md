@@ -59,14 +59,15 @@ Plan §1 rule 3 把"协议字节级、音频样本级匹配"列为不可妥协�
 - `FrameAccumulator::append(span<const u8>, frame_size:u16) -> std::vector<std::vector<u8>>`、`reset() -> void`、`pending_size() -> size_t`。`frame_size == 0` → 返回空 list 且不写入 pending buffer（与 Python `FrameAccumulator.append` 的 `if frame_size <= 0: return []` 守卫逐字节对应；这就是为什么 C++ 端必须用 `std::uint16_t`：负值不可能到达 `append`，而 `0` 走显式 no-op 分支，不会被当作"缓冲区吃满"无限循环）。`reset()` 丢弃 pending（O(1)，保留 `capacity()`），调用后下一次 `append()` 与全新构造实例在相同输入/frame_size 下结果完全相同，**包括跨 `frame_size` 重分帧场景**（即"旧流遗留 partial 帧不会进入新流的 emitted 列表"——这是 step 4 要证明的不变量）。
 - 线程：所有类型都非线程安全；所有权单一。
 
-#### 3.1 `frame_size` 协议域（Area 4 step 4 明确）
+#### 3.1 `frame_size` 协议域（Area 4 step 4 corrective）
 
-| 来源 | 范围 | 行为 |
+| 来源 | 范围 | 公共 API 行为 |
 |---|---|---|
-| 协议有效域 | `1..65535`（含两端） | 正常分帧 |
-| 协议无效（hard guard） | `0` | `append()` 返回 `[]` 且不写入 pending；这与 Python 基线一致 |
-| C++ 类型范围之外 | `< 0` 或 `> 65535` | 在 Python/native 边界处，pybind11 自身的 `std::uint16_t` 窄化在调用前抛出 `TypeError("append(): incompatible function arguments. ... Invoked with: ...")`（实测：pybind11 v2.12.0 + Python 3.11），数据**不入 C++**。这不是项目策略，是 pybind11 把"无法窄化到目标 C++ 类型"打包成 `incompatible function arguments` 的固定行为。step 4 smoke `test_boundary_frame_size_negative` / `_above_uint16` 用 `assertRaises(Exception)` 兼容抓取；测试**不**硬绑具体异常类型，避免 pybind11 升级把 `OverflowError → TypeError` 之类的微调做成假阳性。如果未来 binding 改为接受 Python `int` 并显式抛 `OverflowError`，测试仍能过 |
-| Invariant | `0 <= pending_size() < frame_size` | 每次成功 `append()`（`frame_size > 0`）后必然成立；`reset()` 后 trivial `0` |
+| 协议无效（no-op） | `frame_size <= 0`（包括 0 与所有负值） | `append()` 在 **Python/native binding 边界**被吸收为 no-op：`[]` 返回；**`pending_size` 不变**（既有 pending 与输入 `data` 都不被写入）。这与 Python 基线 `atvv_protocol.py:272-273` 的 `if frame_size <= 0: return []` 守卫逐字对应；不同点在于 binding 层额外保证 pending 不被改写，因为 C++ `append()` 本身的 `<= 0` 守卫已经保留 pending |
+| 协议有效域 | `1..65535`（含两端） | 在 binding 层 narrow 到 `std::uint16_t` 后委托给 C++ core，分帧输出与 Python 基线 sample-equal |
+| 协议无效（拒绝） | `frame_size > 65535` | 在 **Python/native binding 边界**显式抛 `TypeError`，不进入 C++ core，**`pending_size` 也不变**。这是 binding 层唯一一处显式异常上升点；类型为 `TypeError`，消息文本不被锁定（pybind11 升级不会带来测试假阳性） |
+| C++ core 签名 | `std::uint16_t` | **未变**：`remotemic::adpcm::FrameAccumulator::append` 仍然接受 `std::uint16_t frame_size`；`<= 0` 在 C++ 端由 `if (frame_size <= 0) return out;` 守卫掉（防御性的，正常路径不会进入） |
+| Invariant | `pending_size < frame_size <= 65535` | 每次成功 `append()`（`frame_size` 在 `1..65535`）后必然成立；`reset()` 后 trivial `pending_size == 0`。下界来自 `append()` 循环只 drain 整个 `frame_size` 字节，上界来自 `std::uint16_t` 类型
 
 #### 3.2 Area 4 范围重申（step 4 补强）
 

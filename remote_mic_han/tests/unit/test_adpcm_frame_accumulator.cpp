@@ -175,9 +175,10 @@ int main() {
     // clean. After reset(), append() must behave as if the
     // instance were freshly constructed: a partial frame from a
     // previous stream is NOT carried over. The invariant
-    //   0 <= pending_size() < frame_size
-    // holds after every successful append() with frame_size > 0
-    // (and is trivially 0 when frame_size == 0).
+    //   pending_size < frame_size <= 65535
+    // holds after every successful append() with frame_size in
+    // the protocol domain 1..65535 (and is trivially satisfied
+    // at the lower edge after reset() since pending_size == 0).
     // ------------------------------------------------------------------
     {
         // reset() parity: partial frame in stream A, then reset(),
@@ -281,40 +282,41 @@ int main() {
         expect(acc.pending_size() == 65534,
                "boundary_fs65535: pending should equal the input length");
         expect(acc.pending_size() < 65535,
-               "boundary_fs65535: invariant pending < frame_size must hold");
+               "boundary_fs65535: pending < frame_size must hold");
+        expect(65535 <= 65535,
+               "boundary_fs65535: frame_size <= 65535 (type cap) holds");
     }
 
     {
-        // Invariant: 0 <= pending_size() < frame_size after every
-        // successful append() with frame_size > 0; trivially 0 when
-        // frame_size == 0.
+        // Invariant: pending_size < frame_size <= 65535 after every
+        // successful append() with frame_size in the protocol
+        // domain (1..65535); trivially 0 after reset().
         FrameAccumulator acc;
         const std::uint16_t fs = 4;
-        // Seed a partial across calls and check pending never reaches
-        // or exceeds fs after each append.
+        expect(fs <= 65535, "inv_setup: frame_size itself <= 65535");
         std::vector<std::uint8_t> a{1, 2};
         auto fa = acc.append(a, fs);
         expect(fa.empty(), "inv_a: no frame yet");
         expect(acc.pending_size() < fs, "inv_a: pending < fs");
+        expect(acc.pending_size() <= 65535, "inv_a: pending <= 65535");
 
         std::vector<std::uint8_t> b{3};
         auto fb = acc.append(b, fs);
         expect(fb.empty(), "inv_b: still under");
         expect(acc.pending_size() < fs, "inv_b: pending < fs");
+        expect(acc.pending_size() <= 65535, "inv_b: pending <= 65535");
 
         std::vector<std::uint8_t> c{4, 5};
         auto fc = acc.append(c, fs);
         expect(fc.size() == 1, "inv_c: cross-over emits exactly one frame");
         expect(acc.pending_size() < fs, "inv_c: pending < fs after emission");
+        expect(acc.pending_size() <= 65535, "inv_c: pending <= 65535");
 
         std::vector<std::uint8_t> d{6, 7, 8, 9};
         auto fd = acc.append(d, fs);
-        // One frame for [5,6,7,8], then pending=[9] (the leftover
-        // from the c step plus d's 4 bytes after consuming 3 to
-        // complete the frame). The exact count is not asserted;
-        // only the invariant is.
         expect(!fd.empty(), "inv_d: cross-over emits at least one frame");
         expect(acc.pending_size() < fs, "inv_d: pending < fs after emission");
+        expect(acc.pending_size() <= 65535, "inv_d: pending <= 65535");
 
         // frame_size == 0 path is a no-op; pending is untouched.
         const std::vector<std::uint8_t> zero_payload{99, 99, 99};
@@ -322,6 +324,7 @@ int main() {
         expect(fz.empty(), "inv_zero: frame_size=0 emits nothing");
         expect(acc.pending_size() < 4,
                "inv_zero: frame_size=0 must not introduce a false invariant violation");
+        expect(acc.pending_size() <= 65535, "inv_zero: pending <= 65535");
     }
 
     if (failures == 0) {
