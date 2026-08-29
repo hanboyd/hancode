@@ -54,6 +54,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 add_library(remotemic_atvv STATIC
     src/atvv/capabilities.cpp
+    src/atvv/control.cpp
 )
 
 target_include_directories(remotemic_atvv
@@ -139,6 +140,22 @@ if(REMOTEMIC_BUILD_TESTS)
     # an explicit WORKING_DIRECTORY at the source root keeps the path
     # lookup short and deterministic.
     set_tests_properties(remotemic_atvv_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 2 / Area 2 TDD red state: stub returns std::nullopt / empty
+    # vector, so the empty-input decode fixture passes and the 4 encode
+    # + 7 valid decode fixtures fail. See ADR-0012 §3 / §8 and
+    # tests/unit/test_atvv_control.cpp.
+    add_executable(remotemic_atvv_control_tests tests/unit/test_atvv_control.cpp)
+    target_link_libraries(remotemic_atvv_control_tests PRIVATE remotemic_atvv)
+    if(MSVC)
+        target_compile_options(remotemic_atvv_control_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_atvv_control_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_atvv_control_tests COMMAND remotemic_atvv_control_tests)
+    set_tests_properties(remotemic_atvv_control_tests PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
