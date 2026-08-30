@@ -105,15 +105,25 @@ the shadow dual-owner pattern explicitly forbidden in the real path.
 
 ## How to launch with the switch set
 
-Open PowerShell, set the three env vars in the same shell where you
-launch the app, then start the normal launcher:
+Open PowerShell, set the three env vars + `PYTHONPATH` in the same
+shell where you launch the app, then start the normal launcher. The
+venv's `python.exe` does not include `<repo>/apps/windows/rc003/src`
+on `sys.path` by default; without `PYTHONPATH`, `python -m ovb_rc003`
+fails with `No module named ovb_rc003`.
 
 ```powershell
 $env:REMOTEMIC_NATIVE_CHOICE_VOICE_CONTROLLER = "native"
 $env:REMOTEMIC_NATIVE_CHOICE_VOICE_EDGE_DEBOUNCER = "native"
 $env:REMOTEMIC_NATIVE_CHOICE_ATVV_SESSION = "native"
-python -m ovb_rc003
+$env:PYTHONPATH = "C:\Users\hanboyd\hanboyd-code\remote_mic_han\apps\windows\rc003\src;C:\Users\hanboyd\hanboyd-code\remote_mic_han\build\Release"
+cd C:\Users\hanboyd\hanboyd-code\remote_mic_han\apps\windows\rc003
+.\.venv\Scripts\python.exe -m ovb_rc003
 ```
+
+Replace `<repo>` with the actual repo root if it differs. The
+`build\Release` entry is only needed when `_C.cp311-win_amd64.pyd` is
+present (otherwise the native shims fall back to the Python baseline
+automatically — see `voice_controller_native.py:54-63`).
 
 Do NOT use `--dry-run` — it bypasses `RC003App.run_forever()` and only
 probes the bindings; it does not exercise the voice session lifecycle.
@@ -266,10 +276,12 @@ restore the production path to the default `python` baseline:
 2. Close the running app (Ctrl+C). Confirm `app.log` shows clean
    shutdown with no `CleanupIncompleteError`.
 
-3. Relaunch with no env vars set:
+3. Relaunch with no env vars set (keep `PYTHONPATH` from step 0 if
+   you set it):
 
    ```powershell
-   python -m ovb_rc003
+   cd C:\Users\hanboyd\hanboyd-code\remote_mic_han\apps\windows\rc003
+   .\.venv\Scripts\python.exe -m ovb_rc003
    ```
 
 4. Confirm the probe one-liner from "How to verify native is actually
