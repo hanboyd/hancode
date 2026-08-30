@@ -1431,16 +1431,44 @@ class RC003App:
             self._supervisor.request_reconnect()
 
 
-async def _run() -> None:
+async def _run(
+    stop_signal: Optional[bridge_control_windows.BridgeStopSignal] = None,
+) -> None:
     app = RC003App()
+    run_task: Optional[asyncio.Task] = None
+    stop_task: Optional[asyncio.Task] = None
     try:
-        await app.run_forever()
+        if stop_signal is None:
+            await app.run_forever()
+            return
+        run_task = asyncio.create_task(app.run_forever())
+
+        async def _wait_for_stop() -> None:
+            while not await asyncio.to_thread(stop_signal.wait, 0.250):
+                pass
+
+        stop_task = asyncio.create_task(_wait_for_stop())
+        done, _pending = await asyncio.wait(
+            (run_task, stop_task), return_when=asyncio.FIRST_COMPLETED
+        )
+        if stop_task in done:
+            app._logger.info("bridge stop requested by settings; cleaning up")
+            await app.stop()
+        await run_task
     finally:
         await app.stop()
+        if stop_task is not None and not stop_task.done():
+            stop_task.cancel()
+            try:
+                await stop_task
+            except asyncio.CancelledError:
+                pass
 
 
-def main() -> None:
-    asyncio.run(_run())
+def main(
+    stop_signal: Optional[bridge_control_windows.BridgeStopSignal] = None,
+) -> None:
+    asyncio.run(_run(stop_signal))
 
 
 if __name__ == "__main__":

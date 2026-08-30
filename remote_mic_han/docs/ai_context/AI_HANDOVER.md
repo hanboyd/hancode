@@ -1,150 +1,67 @@
 # AI Handover
 
 ```yaml
-last_updated: 2026-08-23T10:30:00+08:00
+last_updated: 2026-08-31T05:15:00+08:00
 agent: minimax-m3 handing off to next agent
 provider: minimax handing off to next
 model: minimax-m3 handing off to next
-git_commit_sha: f3db758
-current_phase: Phase 3 real-device validation, awaiting hardware acceptance
-current_task: ADR-0003 Fix A/B/C implemented in commit f3db758 (worker + configurable 200 ms release debounce + drain); the source bridge has been stopped for a clean handover; Notepad F5 leak and Typeless multi-session flicker are still marked failed on hardware until one Notepad long-press and one Typeless long-hold under the new code path confirm passed
-deadline: two-day delivery window
+git_commit_sha: pending (Phase 3 corrective commit about to land; see git log)
+current_phase: Phase 3 native path "usable after the refactor" — three Phase 3 closeout regressions corrected, real-acceptance partially observed (Step 1/2/7a PASS, Step 6/7b/Typeless/Qianwen deferred or not-reproducible)
+current_task: nothing code-side is blocking. Per the user's "快速完成重构 + 软件健壮" balance, future sessions should pick one deferred bug per cycle and iterate, not try to clear the whole list in one pass
+deadline: none hard; current sprint has shipped a working snapshot
 hardware_validation:
-  status: partial
-  details: BLE and ATVV voice previously passed; 9/12 ordinary keys previously passed; back/volume blocked by Windows HID boundary; ADR-0003 Fix A/B/C code merged but no fresh real-device acceptance run has been performed against the new code path yet
+  status: partial — Phase 3 native path verified end-to-end on real RC003 for short-press / long-press / graceful-stop; late-audio guard, KeyboardInterrupt path, Typeless/Qianwen integration not exercised
+  details: see CURRENT_STATUS.md "Phase 3 corrective + real-acceptance (2026-08-31)" section for the full observation table with app.log excerpts
 completed:
-  - Added repository governance and Git exclusions
-  - Added C++20/CMake core, diagnostic CLI, logger, runtime paths, and unit tests
-  - Built successfully with MSVC 19.44 and Windows SDK 10.0.26100.0
-  - Passed CTest 1/1 and CLI version/diagnostic checks
-  - Imported pinned Windows snapshot 271ed794 with license and source provenance
-  - Installed every pinned Python runtime/dev dependency in an ignored local environment
-  - Added a synthetic ATVV/ADPCM golden fixture
-  - Passed 941 baseline tests with 7 live/system skips and zero failures
-  - Passed the public-boundary scan after packaging changes
-  - Built the PyInstaller directory candidate and passed frozen executable dry-run
-  - Built the unsigned portable ZIP and passed a fresh-extraction dry-run
-  - Compiled the intentionally unsigned Inno Setup installer with Inno Setup 6.7.3
-  - Recorded candidate sizes and SHA-256 hashes in docs/baseline/CANDIDATE-ARTIFACTS.md
-  - Installed and exercised the earlier unsigned candidate through the real installer UI
-  - Fixed settings-window single-instance behavior and verified repeated launches leave one window
-  - Extracted a reusable Mac-derived product design system under opendesign/design-systems/remote-mic-product
-  - Passed independent 900x680 OpenDesign visual verification
-  - Reworked QML with a narrow side rail, page titles, larger Chinese type, RC003 image, and two-column connection layout
-  - Inspected all four source-rendered pages and launched the rebuilt frozen GUI visibly
-  - Reconfirmed the complete baseline after the UI change
-  - Rebuilt and hashed the unsigned portable and installer candidates
-  - Passed a fresh portable extraction dry-run and frozen settings single-instance check
-  - Overwrite-installed the rebuilt UI candidate through the real Inno Setup flow
-  - Verified installed and rebuilt executable SHA-256 values are identical
-  - Verified the installed redesigned UI and one-window/one-process settings behavior
-  - Added one shared multi-size microphone product icon for Qt, executable, taskbar, shortcuts and installer
-  - Deduplicated playback devices across Windows host APIs, hid default aliases and backend jargon, and preferred WASAPI
-  - Rebuilt the frozen executable, portable ZIP and Inno installer after the refinement
-  - Unified enabled UI text on the Windows foreground color and removed diagnostic text overlap
-  - Connected one real RC003 and passed ATVV capabilities, control and aggregate PCM signal validation
-  - Verified direction, OK, Home, Menu, TV and Power press/release events on real hardware
-  - Installed official hash-pinned VB-CABLE Basic Pack45 and observed healthy playback/recording endpoints before reboot
-  - Rechecked both VB-CABLE endpoints after reboot and passed the project diagnostic
-  - Fixed duplicate-backend handling in the diagnostics auto-select action and passed 78 focused tests
-  - Persisted and exactly resolved the live WASAPI CABLE Input endpoint
-  - Passed an in-memory synthetic CABLE Input to CABLE Output loopback without saving audio
-  - Visually confirmed the source UI text color and diagnostics layout fixes on Windows
-  - Configured Typeless microphone to CABLE Output and confirmed the selected label
-  - Started the source bridge without rebuilding; live RC003 discovery and 16 kHz/frame-size-120 capabilities passed
-  - Recorded 9.36 seconds of RC003 signal through VB-CABLE, but user rejected the first two-complete-tap interaction as still conflicting
-  - Reviewed macOS upstream revision 1796b149: custom voice chords use HID KeyDown/KeyUp, while ATVV controls are separately debounced
-  - Reworked Typeless integration to HOLD lctrl+lalt: KeyDown on physical press, retain through intermediate AUDIO_STOP, KeyUp on physical release
-  - Passed 111 focused app/voice/ATVV/BLE tests for the Mac-style held-chord path
-  - Proved from the live log that one hold produced ATVV AUDIO_STARTED, translated F5 with many repeat key-downs, and Raw Input duplicates
-  - Made direct HID the authoritative microphone edge when available and swallowed F5 the fallback owner; disabled Raw Input mic dispatch and HOLD-mode ATVV shortcut injection
-  - Passed 129 focused tests including single-owner direct-HID and F5-fallback sequences, then restarted the source bridge without rebuilding a package
-  - Observed one real post-change hold with exactly one logical F5 trigger, 462 PCM frames / 6.93 seconds signal, deferred AUDIO_STOP while held, and a later physical release closing the shortcut
-  - Stopped the source bridge for a clean OpenCode/MiniMax M3 handover; no package or installer was rebuilt
-  - Imported the entire `remote_mic_han/` tree as the monorepo's first clean baseline at commit `2906b38 chore: import remote_mic_han Phase 0/1/2 initial baseline` (195 files, 39 856 insertions); .gitignore covers `/.claude/` and the previously-leaking `apps/windows/rc003/artifacts/`
-  - Implemented ADR-0003 Fix A in `src/ovb_rc003/app.py` (lock-free LL-hook → `voice-edge-worker` queue, Fix B release debounce wired into the worker, Fix C drain before closing host edge); commit `f3db758 feat(adr-0003): widen voice release debounce to 200 ms and make it configurable`
-  - Pinned the production 200 ms window in three independent surfaces (`voice_edge_debouncer.VoiceEdgeDebouncer(release_window_seconds=0.200)`, the application-side read of `voice_release_debounce_seconds`, and `_normalize_voice_release_debounce`'s fallback); 11 new unit tests cover config clamping, config round-trip and 50/100/200/350 ms configurable-window behaviour
-  - Updated `docs/ai_context/CURRENT_STATUS.md` and this handover to reflect that ADR-0003 is implemented and the source bridge has been stopped for clean handover; real-device acceptance against commit `f3db758` is the next step, not code
+  - Phase 0/1/2 C++ migration landed and frozen at 0.3.0-candidate (provenance verified, 4 areas × 6 gates passed, byte/sample parity with Python baseline)
+  - Phase 3 step 1: ADR-0013 + voice/session headers + TDD red-state unit tests (bf0818e)
+  - Phase 3 steps 2+3: C++ state machines + pybind11 bindings — VoiceController, VoiceEdgeDebouncer, Atvv::Session (207eb70)
+  - Phase 3 step 4: shadow parity tests + helper script, 24/24 ctest Debug + 24/24 ctest Release (d7e3c5c)
+  - Phase 3 step 5: native switch + fake-backend verification (cd9148f)
+  - Phase 3 step 6 closeout: ADR-0013 accepted, version bumped to 0.4.0-candidate in CMake / Python __version__ / pyproject.toml (11f58bd)
+  - Production routing closed at 8cc0c4c: app.py:132 + ble_transport_winrt.py:218 now use make_* factories; REMOTEMIC_NATIVE_CHOICE_*=native actually reaches the real product path
+  - G7 gate registered: ctest target remotemic_phase3_production_routing + tools/verify_phase3_production_routing.py + 17 in-tree unit tests (8cc0c4c)
+  - G7 verify PYTHONPATH fix so _C.cp311-win_amd64.pyd is found ahead of source-tree stubs (cfebb9c)
+  - PHASE3-REAL-ACCEPTANCE.md procedure written for RC003 + Typeless + Qianwen manual steps
+  - CHANGELOG [0.4.0-candidate] entry published with G7 row
+  - Phase 3 corrective (this session, about to commit):
+      * bridge_control_windows.py restored byte-for-byte from 19a0004 (was lost from working tree, no git delete event)
+      * app.main(stop_signal=None) and async _run(stop_signal=None) restored byte-for-byte from 19a0004 (Phase 3 closeout dropped the parameter without updating __main__.py:232)
+      * _NativeVoiceController.__init__ now sets self.trigger_mode = trigger_mode in both branches (mirrors voice_controller.py:46 python baseline surface)
+  - Real-device acceptance observations (this session):
+      * Step 1 short-press PASS — 1 trigger + audio open + 2 ignored F5 repeats + clean release
+      * Step 2 long-press ~27s PASS — HOLD mode held without false close, mid-hold F5 repeat ignored
+      * Step 7a request_bridge_stop() PASS — named-event cleanup path, exit 0
+  - CURRENT_STATUS.md + this handover refreshed with corrective context + observation table
 tests_run:
-  - command: scripts/build.ps1
-    result: passed
-  - command: scripts/test.ps1
-    result: passed (1/1)
-  - command: build/Debug/remotemic.exe --diagnose
-    result: passed
-  - command: scripts/test-baseline.ps1
-    result: passed (933 tests, 7 skipped)
-  - command: apps/windows/rc003/build/check-public-boundary.ps1
-    result: passed
-  - command: scripts/build-baseline-candidate.ps1
-    result: passed; frozen executable dry-run exit 0
-  - command: scripts/package-baseline-portable.ps1
-    result: passed; fresh extraction dry-run exit 0
-  - command: scripts/package-baseline-installer.ps1
-    result: passed; signature status NotSigned
-  - command: source and frozen Windows UI inspection
-    result: passed for all four source pages and rebuilt frozen connection page
-  - command: OpenDesign 900x680 independent visual QA
-    result: passed
-  - command: rebuilt installer overwrite plus installed executable hash comparison
-    result: passed; installed executable matched rebuilt SHA-256
-  - command: repeated installed settings launch
-    result: passed; one visible window and one process
-  - command: apps/windows/rc003/build/build-candidate.ps1 -SkipDependencyInstall
-    result: passed; 941 tests, public boundary scan, PyInstaller build and frozen dry-run
-  - command: Inno Setup 6.7.3 compile
-    result: passed; intentionally unsigned refined installer
-  - command: rebuilt frozen settings launch and executable icon extraction
-    result: passed; responsive window, embedded icon present
-  - command: python -m unittest tests.test_qt_settings_app
-    result: passed (78/78)
-  - command: post-reboot VB-CABLE enumeration, persistence and exact resolution
-    result: passed; preferred Windows WASAPI CABLE Input selected
-  - command: in-memory synthetic CABLE Input to CABLE Output loopback
-    result: passed; rms 0.0566, peak 0.0800, no audio saved
-  - command: source UI and Typeless settings inspection
-    result: passed; UI fixes visible and Typeless selected CABLE Output
-  - command: source bridge launch and app.log inspection
-    result: passed for process, unique RC003 discovery and ATVV capabilities; real phrase pending
-  - command: python -m unittest tests.test_app_wiring tests.test_voice_controller tests.test_atvv_session tests.test_ble_transport_contract
-    result: superseded by the 111-test Mac-style held-chord run
-  - command: real RC003 long-press through source bridge and VB-CABLE into Typeless
-    result: failed product acceptance; signal/transcription occurred but the two-tap interaction conflict remained
-  - command: Mac-style held-chord focused regression
-    result: passed (111 tests, 1 environment skip); real RC003 confirmation pending
-  - command: python -m unittest tests.test_app_wiring tests.test_voice_controller tests.test_atvv_session tests.test_ble_transport_contract tests.test_legacy_key_suppressor
-    result: passed (129 tests, 1 environment skip); covers ATVV-before-F5, F5 repeat collapse, Raw Input duplicate rejection, and one direct-HID/F5 owner
-  - command: restarted source bridge after single-owner routing change
-    result: passed for process, unique RC003 discovery, ATVV capabilities, F5 guard and HID tap startup; real physical press pending
-  - command: one real RC003 long-hold after single-owner routing change
-    result: passed for program-side ordering and audio signal (one logical F5 trigger, 462 frames, 6.93 seconds, AUDIO_STOP deferred until physical release); foreground Notepad and Typeless acceptance still pending
-  - command: import the entire remote_mic_han tree as the monorepo's first clean baseline
-    result: passed at commit 2906b38 (195 files, 39 856 insertions); .gitignore cover was extended with /.claude/ and apps/windows/rc003/.gitignore's artifacts/ before commit
-  - command: git commit --amend the baseline to remove accidentally-staged build artefacts then add artifacts/ back to .gitignore
-    result: passed at commit 2906b38 (final hash) — the two RemoteMicRC003Setup candidate binaries were unstaged and the commit was rewritten clean
-  - command: implement and test ADR-0003 Fix A worker + Fix B release debounce + Fix C drain
-    result: passed; code lives in src/ovb_rc003/app.py + voice_edge_debouncer.py + audio_playback.drain(); 11 new tests cover configurable window and config clamping; commit f3db758
-  - command: PYTHONPATH=src python -m unittest tests.test_app_wiring tests.test_voice_controller tests.test_atvv_session tests.test_ble_transport_contract tests.test_legacy_key_suppressor tests.test_voice_edge_debouncer tests.test_audio_playback_drain tests.test_config
-    result: passed (186 passing, 1 environment skip, 1 pre-existing Python 3.14 ResourceWarning event-loop failure unrelated to this work)
+  - command: python tools/verify_phase3_production_routing.py (under apps/windows/rc003/.venv python 3.11.15)
+    result: passed (19/19 assertions, including three _is_native=True C++-side checks; no NOTE/skipped rows)
+  - command: python -m unittest discover -s apps/windows/rc003/tests -t apps/windows/rc003 -p test_phase3_production_routing.py -v
+    result: passed (17/17, including test_voice_shim_is_native_when_cpp_binding_is_built)
+  - command: python -m ovb_rc003 --dry-run
+    result: passed (dry-run: all ovb_rc003 modules imported successfully + native probe lines)
+  - command: python -c "from ovb_rc003.voice_controller_native import _NativeVoiceController; from ovb_rc003.voice_controller import VoiceTriggerMode; c=_NativeVoiceController(VoiceTriggerMode.HOLD); print(c.trigger_mode, c._is_native)"
+    result: passed (HOLD True)
+  - command: live bridge with REMOTEMIC_NATIVE_CHOICE_*=native — Step 1 / Step 2 / Step 7a real-hardware observations
+    result: passed per CURRENT_STATUS.md observation table
 known_problems:
-  - Back and volume buttons are not delivered through Raw Input or the low-level keyboard hook
-  - Elevated WUDFHost injection and direct HID-over-GATT characteristic access are denied by Windows
-  - Qianwen remains unverified
-  - Single-owner sequencing passed one real hardware hold in logs under the pre-`f3db758` code, but elimination of foreground Notepad F5/date leakage and Typeless interaction are not yet user-confirmed against the `f3db758` worker
-  - Uninstall/residue checks need explicit user authorization; accepted candidate remains installed
+  - Back / volume-up / volume-down do not reach Raw Input or the low-level keyboard hook; elevated WUDFHost injection and direct HID-over-GATT characteristic access are denied by Windows; surface this as a gap rather than ship a SYSTEM workaround
+  - Step 6 late-audio guard cannot be triggered in healthy RC003 + software VB-Cable (the procedure's "unplug VB-Cable" workaround was wrong about the mechanism — VB-Cable is the audio sink, not the ATVV notification source). Genuine RC003 firmware fault would be needed; guard logic is unit-test covered
+  - Step 7b KeyboardInterrupt path cannot be cleanly triggered from Claude Code background-task harness (Windows console signal semantics do not reach Python's SetConsoleCtrlHandler). 7a's evidence covers the same `app.stop()` cleanup
+  - Typeless third-party input tool has not been independently validated on native path; bridge's physicalized-VK chord delivery IS verified in Step 1/2 logs
+  - Qianwen third-party input tool has not been independently validated
+  - Installer uninstall/residue check + release signing need explicit user authorization
 do_not_change:
-  - Do not start a C++ rewrite of working product functionality during the two-day sprint
-  - Do not report all HID buttons or target-app validation as passed
-  - Do not ship a SYSTEM service or weaken Windows protections to recover missing HID usages
-  - Do not touch `voice_release_debounce_seconds`'s 0.200 default or its [0.050, 0.500] clamp band without a fresh ADR; the value is pinned at three layers on purpose
+  - Do not produce PyInstaller / Inno / portable ZIP artifacts before Phase 8 (cpp-migration-version-policy.md Rule 1)
+  - Do not bump voice_release_debounce_seconds default or its [0.050, 0.500] clamp band without a fresh ADR; the value is pinned at three layers on purpose
+  - Do not flip any REMOTEMIC_NATIVE_CHOICE_* env var to native for normal users; default stays python
+  - Do not auto-fix a failed real-acceptance row; stop, paste app.log excerpt + 1-line symptom
+  - Do not start a C++ rewrite of working product functionality outside the phase plan
+  - The three Phase 3 corrective fixes in this session are deliberately byte-for-byte restores from 19a0004; do not "improve" them while iterating on separate bugs
 next:
-  - Read all required context (AGENTS.md, PROJECT_CONTEXT.md, CURRENT_STATUS.md, this handover, the relevant ADR) and inspect Git state before editing; do not redesign the project
-  - Start the source bridge from `apps/windows/rc003` with `PYTHONPATH=src`; confirm `RC003 voice legacy-key guard enabled` and `voice-edge-worker` are alive in the live log
-  - Run one real RC003 long-press in Notepad; capture live `app.log`; confirm no date/time string is inserted AND that `_dispatch_voice_mic_edge` fires on `voice-edge-worker`, not on `Thread-3 (_run)`
-  - Run one real RC003 long-hold in Typeless; confirm exactly one voice window with one complete transcription; capture live `app.log`; confirm at most one `voice physical mic trigger received before audio start` followed by one `voice physical mic released; closing held host shortcut` for the single physical hold
-  - Only after both acceptance observations succeed, move the Notepad F5 leak and Typeless multi-session flicker entries from `failed` to `passed` and update CURRENT_STATUS.md with the run's `app.log` excerpt
-  - Make unsupported back/volume state explicit in the product (deferred, not a regression)
-  - Validate Qianwen only if it remains a required target after Typeless passes
-  - Run uninstall/residue checks only with explicit authorization
+  - On any new session: git log --oneline -5 to find the Phase 3 corrective commit, then read CURRENT_STATUS.md and this handover before doing anything
+  - Per the user's "快速完成重构 + 软件健壮" balance: pick ONE deferred item per cycle, fix it, validate, commit, update CURRENT_STATUS. Do not try to clear the whole list in one pass
+  - For Phase 4 entry: requires a fresh ADR per cpp-migration-version-policy.md Rule 1/2; do not start without one. Phase 3's remaining deferred items may be carried forward or marked abandoned, per user direction
+  - Do not re-run the full PHASE3-REAL-ACCEPTANCE.md table from scratch unless a Phase 3 source file is changed; the Step 1/2/7a PASS results are durable observations
 first_command_for_next_agent: git status --short --untracked-files=all
 ```

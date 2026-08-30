@@ -56,6 +56,10 @@ class _NativeVoiceController:
             # not break callers.
             self._impl = py_mod.VoiceController(trigger_mode)
             self._is_native = False
+            # Mirror python baseline surface (``voice_controller.py:46``
+            # sets the same attribute on the python class so that
+            # downstream reads like ``app.py:583`` work uniformly).
+            self.trigger_mode = trigger_mode
             return
         mode = (
             _rn.VoiceTriggerMode.Hold
@@ -64,6 +68,11 @@ class _NativeVoiceController:
         )
         self._impl = _rn.VoiceController(mode)
         self._is_native = True
+        # Same python-baseline parity as above; without this, app.py's
+        # ``self._voice.trigger_mode == VoiceTriggerMode.HOLD`` reads
+        # (583/1163/1176/1193) raise ``AttributeError`` when production
+        # routes through this shim.
+        self.trigger_mode = trigger_mode
 
     @property
     def holding(self) -> bool:
