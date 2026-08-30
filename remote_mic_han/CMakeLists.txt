@@ -519,6 +519,66 @@ if(REMOTEMIC_BUILD_TESTS)
         set_tests_properties(remotemic_atvv_session_bind_smoke PROPERTIES
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
+
+        # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
+        # (G5). Each runs identical scripts through both the python
+        # baseline and the C++ binding (via the bridge wrappers) and
+        # asserts byte-exact equality. Env-leak safety: the env
+        # override lives inside setUpClass with proper teardown
+        # restore, matching the corrective fix pattern from
+        # commit 5ce9bd5.
+        # Helper script that bootstraps PYTHONPATH with both the build dir
+        # (containing the compiled remotemic_native package) and the
+        # source dir (containing ovb_rc003) before invoking unittest.
+        # CMake's ENVIRONMENT property treats ``;`` as a list
+        # separator and silently drops subsequent entries; this
+        # wrapper sidesteps that by setting sys.path inside Python.
+        set(_REMOTEMIC_PARITY_HELPER
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_parity_test.py"
+        )
+        set(_REMOTEMIC_PARITY_ENV
+            "REMOTEMIC_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+            "REMOTEMIC_SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/src"
+        )
+
+        add_test(
+            NAME remotemic_voice_controller_native_parity
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_voice_controller_native_parity.py"
+                -v
+        )
+        set_tests_properties(remotemic_voice_controller_native_parity PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
+        add_test(
+            NAME remotemic_voice_edge_debouncer_native_parity
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_voice_edge_debouncer_native_parity.py"
+                -v
+        )
+        set_tests_properties(remotemic_voice_edge_debouncer_native_parity PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
+        add_test(
+            NAME remotemic_atvv_session_native_parity
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_atvv_session_native_parity.py"
+                -v
+        )
+        set_tests_properties(remotemic_atvv_session_native_parity PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
     endif()
 endif()
 

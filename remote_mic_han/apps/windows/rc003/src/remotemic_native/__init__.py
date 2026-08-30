@@ -30,6 +30,18 @@ try:
         probe_shared_ptr,
         probe_callback,
         probe_throw,
+        # Phase 3 / ADR-0013 step 3: voice controller / release-window
+        # debouncer / ATVV session state machines. The bridge wrappers
+        # in ovb_rc003/voice_controller_native.py /
+        # voice_edge_debouncer_native.py / atvv_session_native.py import
+        # these via the public remotemic_native package rather than the
+        # private ``_C`` module so the package wrapper remains the
+        # single import surface for product code (ADR-0011).
+        VoiceTriggerMode,
+        VoiceHostAction,
+        VoiceController,
+        VoiceEdgeDebouncer,
+        AtvvSession,
     )
     _C_AVAILABLE = True
 except ImportError:
@@ -56,6 +68,11 @@ except ImportError:
     atvv_mic_open_command = None  # type: ignore[assignment,misc]
     atvv_mic_close_command = None  # type: ignore[assignment,misc]
     postprocess = None  # type: ignore[assignment,misc]
+    VoiceTriggerMode = None  # type: ignore[assignment,misc]
+    VoiceHostAction = None  # type: ignore[assignment,misc]
+    VoiceController = None  # type: ignore[assignment,misc]
+    VoiceEdgeDebouncer = None  # type: ignore[assignment,misc]
+    AtvvSession = None  # type: ignore[assignment,misc]
 
 
 # ``CounterSink`` is the C++ typedef used by ``probe_callback``'s argument
@@ -82,4 +99,9 @@ __all__ = [
     "probe_shared_ptr",
     "probe_callback",
     "probe_throw",
+    "VoiceTriggerMode",
+    "VoiceHostAction",
+    "VoiceController",
+    "VoiceEdgeDebouncer",
+    "AtvvSession",
 ]

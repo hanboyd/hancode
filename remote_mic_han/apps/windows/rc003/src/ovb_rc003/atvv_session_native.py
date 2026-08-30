@@ -160,13 +160,44 @@ class _ShadowATVVSession:
 
 
 def _event_to_dict(event: object) -> dict:
-    """Convert a python-side ``ControlEvent`` dataclass to the same
-    dict shape the native binding returns, so shadow parity compares
-    apples-to-apples."""
+    """Convert a python-side ``ControlEvent`` dataclass (or a native
+    dict already produced by the C++ binding) to a flat dict shape
+    that compares equally across both implementations.
+
+    Idempotent: feeding an already-normalized dict back in returns
+    the same dict (so the shadow parity test can normalize both
+    sides through this helper without losing structure)."""
+    if isinstance(event, dict):
+        # Native binding may emit ``{"capabilities": <C++ struct>}``;
+        # normalize the inner value too so cross-impl equality works.
+        if "capabilities" in event and not isinstance(
+            event["capabilities"], dict
+        ):
+            caps = event["capabilities"]
+            return {
+                **event,
+                "capabilities": {
+                    "version": caps.version,
+                    "codecs": caps.codecs,
+                    "interaction": caps.interaction,
+                    "frame_size": caps.frame_size,
+                    "selected_codec": caps.selected_codec,
+                    "sample_rate": caps.sample_rate,
+                },
+            }
+        return event
     if isinstance(event, py_mod.CapsReceived):
+        caps = event.capabilities
         return {
             "opcode": "Caps",
-            "capabilities": event.capabilities,
+            "capabilities": {
+                "version": caps.version,
+                "codecs": caps.codecs,
+                "interaction": caps.interaction,
+                "frame_size": caps.frame_size,
+                "selected_codec": caps.selected_codec,
+                "sample_rate": caps.sample_rate,
+            },
         }
     if isinstance(event, py_mod.MicButtonPressed):
         return {"opcode": "MicButton"}
