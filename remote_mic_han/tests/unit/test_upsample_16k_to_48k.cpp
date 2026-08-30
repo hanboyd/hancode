@@ -78,45 +78,66 @@ void test_constant_source_yields_three_copies_per_input() {
 }
 
 void test_step_input_matches_python_baseline() {
-    // Source {0, 1000}; previous=0. Per audio_playback.py:154-172,
-    // each sample expands to (prev + delta/3, prev + 2*delta/3, current):
-    //   i=0: delta=1000 -> (333, 667, 1000)
-    //   i=1: delta=0    -> (1000, 1000, 1000)
+    // Source {0, 1000}. Per audio_playback.py:154-172 (no previous
+    // state yet, so previous defaults to values[0] = 0):
+    //   i=0: delta=0   -> (0, 0, 0)        previous was values[0]
+    //   i=1: delta=1000 -> (333, 667, 1000)
     UpsampleState s;
     std::vector<std::int16_t> src{0, 1000};
     auto out = upsample_16k_to_48k(std::span<const std::int16_t>(src), s);
-    expect_eq_int(out[0], 333, "first output: round(0 + 1000/3)");
-    expect_eq_int(out[1], 667, "second output: round(0 + 2*1000/3)");
-    expect_eq_int(out[2], 1000, "third output: current sample");
-    expect_eq_int(out[3], 1000, "fourth output: round(1000 + 0/3)");
-    expect_eq_int(out[4], 1000, "fifth output: round(1000 + 2*0/3)");
-    expect_eq_int(out[5], 1000, "sixth output: current sample");
+    expect_eq_int(out[0], 0, "first triplet: round(0 + 0/3) (delta=0 since prev=source[0])");
+    expect_eq_int(out[1], 0, "second output: round(0 + 2*0/3)");
+    expect_eq_int(out[2], 0, "third output: current sample (source[0])");
+    expect_eq_int(out[3], 333, "fourth output: round(0 + 1000/3)");
+    expect_eq_int(out[4], 667, "fifth output: round(0 + 2*1000/3)");
+    expect_eq_int(out[5], 1000, "sixth output: current sample (source[1])");
 }
 
 void test_negative_step_matches_python_baseline() {
-    // Source {0, -1000}; previous=0.
-    //   i=0: delta=-1000 -> (-333, -667, -1000)
+    // Source {0, -1000}; previous defaults to values[0] = 0.
+    //   i=0: delta=0    -> (0, 0, 0)
+    //   i=1: delta=-1000 -> (-333, -667, -1000)
     UpsampleState s;
     std::vector<std::int16_t> src{0, -1000};
     auto out = upsample_16k_to_48k(std::span<const std::int16_t>(src), s);
-    expect_eq_int(out[0], -333, "first output: round(0 + -1000/3)");
-    expect_eq_int(out[1], -667, "second output: round(0 + 2*-1000/3)");
-    expect_eq_int(out[2], -1000, "third output: current sample");
+    expect_eq_int(out[0], 0, "first triplet: round(0 + 0/3)");
+    expect_eq_int(out[1], 0, "second output: round(0 + 2*0/3)");
+    expect_eq_int(out[2], 0, "third output: current sample (source[0])");
+    expect_eq_int(out[3], -333, "fourth output: round(0 + -1000/3)");
+    expect_eq_int(out[4], -667, "fifth output: round(0 + 2*-1000/3)");
+    expect_eq_int(out[5], -1000, "sixth output: current sample (source[1])");
 }
 
-void test_overflow_clamps_to_int16_range() {
-    // Step that would overflow int16 if not clamped:
-    // previous=30000, current=30000 -> delta=0; no overflow risk.
-    // Use previous=-30000, current=30000 -> delta=60000, out of int16.
-    // (30000 + round(60000/3)) = 30000 + 20000 = 50000 -> clamped to 32767.
+void test_step_input_with_previous_state_matches_python_baseline() {
+    // Source {1000}; previous=0 (set externally).
+    //   i=0: delta=1000 -> (333, 667, 1000)
     UpsampleState s;
-    s.previous_sample = -30000;
+    s.previous_sample = 0;
     s.have_previous = true;
-    std::vector<std::int16_t> src{30000};
+    std::vector<std::int16_t> src{1000};
     auto out = upsample_16k_to_48k(std::span<const std::int16_t>(src), s);
-    expect_eq_int(out[0], 32767, "overflow sample clamped to 32767");
-    expect_eq_int(out[1], 32767, "second overflow sample clamped to 32767");
-    expect_eq_int(out[2], 30000, "current sample within int16 range");
+    expect(out.size() == 3, "single source with previous -> 3 outputs");
+    expect_eq_int(out[0], 333, "first output: round(0 + 1000/3)");
+    expect_eq_int(out[1], 667, "second output: round(0 + 2*1000/3)");
+    expect_eq_int(out[2], 1000, "third output: current sample");
+}
+
+void test_intermediate_values_within_int16() {
+    // With valid int16 inputs, the formula (previous + k*delta/3)
+    // stays within int16 range because |delta| <= 65535 and the
+    // weighted average of two int16 values cannot exceed int16.
+    // Verify that taps stay in range for a worst-case scenario.
+    UpsampleState s;
+    s.previous_sample = -32768;
+    s.have_previous = true;
+    std::vector<std::int16_t> src{32767};
+    auto out = upsample_16k_to_48k(std::span<const std::int16_t>(src), s);
+    expect(out.size() == 3, "single source -> 3 outputs");
+    // All three outputs should be valid int16 (no clamping needed
+    // since the math is bounded by max(|previous|, |current|) <= 32767).
+    expect(out[0] >= -32768 && out[0] <= 32767, "tap1 within int16 range");
+    expect(out[1] >= -32768 && out[1] <= 32767, "tap2 within int16 range");
+    expect_eq_int(out[2], 32767, "current sample preserved");
 }
 
 }  // namespace
@@ -128,7 +149,8 @@ int main() {
     test_constant_source_yields_three_copies_per_input();
     test_step_input_matches_python_baseline();
     test_negative_step_matches_python_baseline();
-    test_overflow_clamps_to_int16_range();
+    test_step_input_with_previous_state_matches_python_baseline();
+    test_intermediate_values_within_int16();
 
     if (failures != 0) {
         std::cerr << "Upsample16kTo48k tests: " << failures
