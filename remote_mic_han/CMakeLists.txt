@@ -579,6 +579,28 @@ if(REMOTEMIC_BUILD_TESTS)
         set_tests_properties(remotemic_atvv_session_native_parity PROPERTIES
             ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
         )
+
+        # Phase 3 / ADR-0013 step 5: native switch + fake-backend
+        # shadow verification. The bridge wrappers must (a) return
+        # fresh instances per call (single-session owner contract)
+        # and (b) route through the ``_C``-imported native class
+        # without side effects. The fake backend is a runtime
+        # monkey-patch that mimics the C++ surface so the test
+        # asserts the bridge actually invokes the imported
+        # ``remotemic_native.VoiceController`` /
+        # ``remotemic_native.AtvvSession`` symbol.
+        add_test(
+            NAME remotemic_phase3_native_switch
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase3_native_switch.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase3_native_switch PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
     endif()
 endif()
 
