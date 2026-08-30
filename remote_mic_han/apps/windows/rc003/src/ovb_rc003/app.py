@@ -83,7 +83,17 @@ from . import (
     win32_input,
     win32_keys,
 )
+# Phase 3 / ADR-0013 §5: production routing for the three Phase 3 state
+# machines. Default choice is "python" (see ``_remotemic_native_runtime``),
+# so ordinary users get the python baseline unchanged; setting
+# ``REMOTEMIC_NATIVE_CHOICE_*=native`` for the three keys routes the real
+# product path through the C++ implementations via the bridge shims. The
+# ``voice_controller`` and ``voice_edge_debouncer`` modules remain imported
+# above for their public Python types (``VoiceHostAction``,
+# ``VoiceTriggerMode``).
 from .atvv_session import AudioStarted, AudioStopped, CapsReceived, MicButtonPressed, PcmStats
+from .voice_controller_native import make_voice_controller
+from .voice_edge_debouncer_native import make_voice_edge_debouncer
 
 
 class CleanupIncompleteError(RuntimeError):
@@ -119,7 +129,7 @@ class RC003App:
         # Raw Input may repeat a key-down edge while a button is held.  Usage
         # frequency represents physical presses, not keyboard auto-repeat.
         self._usage_pressed_buttons: set[str] = set()
-        self._voice = voice_controller.VoiceController(
+        self._voice = make_voice_controller(
             key_mapping.VoiceTriggerMode(self._config["voice_trigger_mode"])
         )
         self._voice_hotkey = hotkey.HotkeySpec.parse(self._config["voice_hotkey"])
@@ -190,7 +200,7 @@ class RC003App:
         # default in ``self._config.get`` mirrors the debouncer default so
         # a stripped config.json still produces the production 200 ms
         # window.
-        self._voice_edge_debouncer = voice_edge_debouncer.VoiceEdgeDebouncer(
+        self._voice_edge_debouncer = make_voice_edge_debouncer(
             release_window_seconds=float(
                 self._config.get("voice_release_debounce_seconds", 0.200)
             ),

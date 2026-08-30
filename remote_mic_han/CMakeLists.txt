@@ -601,6 +601,31 @@ if(REMOTEMIC_BUILD_TESTS)
         set_tests_properties(remotemic_phase3_native_switch PROPERTIES
             ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
         )
+
+        # Phase 3 / ADR-0013 §5 production-routing closeout: verify
+        # the three production call sites (app.py:_voice,
+        # app.py:_voice_edge_debouncer, ble_transport_winrt.py:_session)
+        # route through the make_* factories instead of constructing
+        # the python classes directly. Default choice stays "python"
+        # (no env override -> python baseline, no parallel native
+        # instance); setting the three REMOTEMIC_NATIVE_CHOICE_* keys
+        # to "native" routes the real product path through the bridge
+        # shim holding exactly one C++ impl. Unsetting the env vars
+        # returns to python (no residue). Source-level assertions
+        # defend against a future regression re-introducing a direct
+        # class reference.
+        add_test(
+            NAME remotemic_phase3_production_routing
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase3_production_routing.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase3_production_routing PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
     endif()
 endif()
 

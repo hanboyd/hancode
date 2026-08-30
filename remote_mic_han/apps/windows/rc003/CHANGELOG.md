@@ -32,12 +32,15 @@ patch bump，而不是预先设定。
 VoiceController 状态机 + ATVV 会话边界 + 释放消抖 +
 AUDIO_STOP 2500 ms 稳定停止回退 + 关闭重试所有权）。
 
-**状态对象 shipping 路径仍不掺入**（产品路径继续走 Python
-`VoiceController` / `VoiceEdgeDebouncer` / `ATVVSession`，通过
-`REMOTEMIC_NATIVE_CHOICE_VOICE_CONTROLLER=shadow` /
-`..._VOICE_EDGE_DEBOUNCER=shadow` /
-`..._ATVV_SESSION=shadow` 三个新 module key 验证 python ↔ native
-字节级一致；默认全部 `python`）。
+**状态对象 shipping 路径已接入工厂**（产品路径现在通过
+`make_voice_controller()` / `make_voice_edge_debouncer()` /
+`make_atvv_session()` 三个工厂 dispatch，对应
+`app.py` 的 `self._voice` / `self._voice_edge_debouncer` 构造点和
+`ble_transport_winrt.RC003BleSession.__init__` 的 `self._session`
+构造点；默认全部 `python`，所以普通用户的体验与 Phase 2 完全一致；
+设置 `REMOTEMIC_NATIVE_CHOICE_*=native` 时真实产品路径得到
+`_Native*` 桥接包装（单 owner，禁止 python/native 双跑）。
+Phase 3 真实路由改动的门禁见下表 G7 行）。
 
 详见 [ADR-0013](../../docs/decisions/ADR-0013-phase3-session-state-machine-boundary.md)
 第 1-9 节 + Phase 3 step 1-6 commits。
@@ -94,8 +97,11 @@ Python ↔ C++ 字节级一致（无容差）：
 | G5 (shadow parity) | `ctest -C Release -R '^(remotemic_voice_controller_native_parity\|remotemic_voice_edge_debouncer_native_parity\|remotemic_atvv_session_native_parity)\$'` | 3/3 通过 |
 | G6 (native switch + fake backend) | `ctest -C Debug   -R '^remotemic_phase3_native_switch\$'` | 1/1 通过 |
 | G6 (native switch + fake backend) | `ctest -C Release -R '^remotemic_phase3_native_switch\$'` | 1/1 通过 |
-| 总计 | `ctest -C Debug` | 24/24 通过 |
-| 总计 | `ctest -C Release` | 24/24 通过 |
+| G7 (production routing closeout) | `python tools/verify_phase3_production_routing.py` | 4/4 条件全部 PASS（默认 = python / 三键 native → shim / 恢复 → python / 无双 owner） |
+| G7 (production routing closeout) | `ctest -C Debug   -R '^remotemic_phase3_production_routing\$'` | 17/17 通过（1 skipped：本地无 `_C.pyd` 运行时降级到 python fallback；Windows runner with `_C.pyd` 验证 C++ 端） |
+| G7 (production routing closeout) | `ctest -C Release -R '^remotemic_phase3_production_routing\$'` | 同上 |
+| 总计 | `ctest -C Debug` | 25/25 通过 |
+| 总计 | `ctest -C Release` | 25/25 通过 |
 
 ### 真机 / 第三方验收（**deferred**）
 

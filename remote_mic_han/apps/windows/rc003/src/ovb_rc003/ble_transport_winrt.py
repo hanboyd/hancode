@@ -95,6 +95,17 @@ from typing import Any, Callable, List, Optional
 from . import atvv_protocol as proto
 from . import atvv_session
 from . import identity
+# Phase 3 / ADR-0013 §5: production routing for the ATVV session state
+# machine. Default choice is "python" (see ``_remotemic_native_runtime``),
+# so ordinary users get the python baseline unchanged; setting
+# ``REMOTEMIC_NATIVE_CHOICE_ATVV_SESSION=native`` routes the real product
+# path through the C++ implementation via the bridge shim. The
+# ``atvv_session`` module remains imported above for the
+# ``RC003BleSession.session`` property type annotation (a string under
+# ``from __future__ import annotations``); the bridge shim exposes the
+# same surface as ``atvv_session.ATVVSession`` so callers stay
+# implementation-agnostic.
+from .atvv_session_native import make_atvv_session
 
 PcmCallback = Callable[[List[int]], None]
 ControlEventCallback = Callable[[object], None]
@@ -215,7 +226,7 @@ class RC003BleSession:
         self._on_control_event = on_control_event
         self._on_error = on_error
         self._on_disconnected = on_disconnected
-        self._session = atvv_session.ATVVSession(gain_db=gain_db)
+        self._session = make_atvv_session(gain_db=gain_db)
         self._winrt = winrt
         self._device = None
         self._service = None
