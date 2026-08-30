@@ -5,8 +5,8 @@ last_updated: 2026-08-31T05:15:00+08:00
 agent: minimax-m3 handing off to next agent
 provider: minimax handing off to next
 model: minimax-m3 handing off to next
-git_commit_sha: b802a33
-current_phase: Phase 3 native path "usable after the refactor" — three Phase 3 closeout regressions corrected, real-acceptance partially observed (Step 1/2/7a PASS, Step 6/7b/Typeless/Qianwen deferred or not-reproducible)
+git_commit_sha: fde9a1e
+current_phase: Phase 3 native path "usable after the refactor" — three Phase 3 closeout regressions corrected, real-acceptance partially observed (Step 1/2/7a PASS, Step 6/7b/Typeless/Qianwen deferred or not-reproducible), orphan-source audit restore (qianwen_physicalizer + rc003_battery_windows) completed
 current_task: nothing code-side is blocking. Per the user's "快速完成重构 + 软件健壮" balance, future sessions should pick one deferred bug per cycle and iterate, not try to clear the whole list in one pass
 deadline: none hard; current sprint has shipped a working snapshot
 hardware_validation:
@@ -33,6 +33,10 @@ completed:
       * Step 2 long-press ~27s PASS — HOLD mode held without false close, mid-hold F5 repeat ignored
       * Step 7a request_bridge_stop() PASS — named-event cleanup path, exit 0
   - CURRENT_STATUS.md + this handover refreshed with corrective context + observation table
+  - Phase 3 corrective audit (this session, continuation at fde9a1e):
+      * file-inventory diff 19a0004 -> HEAD found no further Phase 3 closeout regressions beyond the three above
+      * signature/attribute audit + `__main__.py` import surface audit both clean (--dry-run smoke passes; __main__.py diff vs19a0004 is +74 lines of intentional Phase 1 native probe scaffold only)
+      * two orphan source modules lost from working tree between 19a0004 and bf0818e (no git delete event): `qianwen_physicalizer.py` (254 lines) + `rc003_battery_windows.py` (201 lines) — restored byte-for-byte from 19a0004 to match the bridge_control_windows.py corrective-restore precedent; SHA verified identical; --dry-run + direct import both PASS
 tests_run:
   - command: python tools/verify_phase3_production_routing.py (under apps/windows/rc003/.venv python 3.11.15)
     result: passed (19/19 assertions, including three _is_native=True C++-side checks; no NOTE/skipped rows)

@@ -2,7 +2,7 @@
 
 - `last_updated`: 2026-08-31T05:15:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: b802a33
+- `git_commit_sha`: fde9a1e
 - `current_phase`: Phase 3 implementation complete; three Phase 3 closeout regressions corrected in this session; native path real-device acceptance partially observed (3 PASS, 2 deferred, 1 not-reproducible)
 - `hardware_available`: true
 
