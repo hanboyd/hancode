@@ -52,6 +52,25 @@ Bridge launched via `apps\windows\rc003\.venv\Scripts\python.exe -m ovb_rc003 --
 | Typeless | **deferred** | Bridge + RC003 native path verified end-to-end; the Typeless third-party input tool is out of Phase 3 scope. |
 | Qianwen | **deferred** | Same as Typeless. |
 
+### Audit + orphan-source restoration (this session, continuation)
+
+A systematic regression audit (file inventory diff + signature/attribute compatibility + `__main__.py` import surface, all `19a0004 → HEAD`) found no further Phase 3 closeout regressions beyond the three already fixed above. **Audit 1 (file inventory diff)**: HEAD has 5 intentional Phase 3 native shims added (`_remotemic_native_runtime.py`, `atvv_native_bridge.py`, `atvv_session_native.py`, `voice_controller_native.py`, `voice_edge_debouncer_native.py`) and 2 orphan source files missing (`qianwen_physicalizer.py`, `rc003_battery_windows.py`). **Audit 2 (signature/attribute compatibility)**: `python -m ovb_rc003 --dry-run` (venv 3.11.15) passes end-to-end; `__main__.py` diff vs19a0004 is +74 lines of intentional Phase 1 native probe scaffold only. **Audit 3 (`__main__` import surface)**: every name referenced from `_run_bridge` / `_run_settings` / `main()` resolves at the receiving module (the three corrective fixes restored `app.main(stop_signal)`, `_NativeVoiceController.trigger_mode`, and `bridge_control_windows.BridgeStopSignal`).
+
+The two orphan files are NOT Phase 3 regressions — they were lost from the working tree between `19a0004` and `bf0818e` (the first Phase 3 commit; no git delete event). Per user direction ("先拿出重构之后可用的，一点点改bug"), restored byte-for-byte from `19a0004` baseline to match the `bridge_control_windows.py` corrective-restore precedent:
+
+| File | Lines (19a0004) | 19a0004 blob | Restored blob | Status |
+|---|---|---|---|---|
+| `apps/windows/rc003/src/ovb_rc003/qianwen_physicalizer.py` | 254 | `eadc0ed08c2b212aea2e1315a3d5444143d143ac` | `eadc0ed08c2b212aea2e1315a3d5444143d143ac` | byte-identical |
+| `apps/windows/rc003/src/ovb_rc003/rc003_battery_windows.py` | 201 | `a6656f6fda3183db9f9932bf9a895c3af321412f` | `a6656f6fda3183db9f9932bf9a895c3af321412f` | byte-identical |
+
+Post-restore verification:
+- `python -m ovb_rc003 --dry-run` (venv 3.11.15): **PASS** — both modules importable, no regression on the existing 27-module import surface
+- Direct `from ovb_rc003 import qianwen_physicalizer, rc003_battery_windows`: **PASS** — public attributes match 19a0004 (`QianwenPhysicalizer`, `start_physicalizer`, `physicalizer_status`, `physicalizer_error`; `BatteryProbeUnavailableError`, `DEVPROPKEY`, `SP_DEVINFO_DATA`)
+- `qianwen_physicalizer.py` depends only on stdlib (`hashlib`, `logging`, `threading`, etc.)
+- `rc003_battery_windows.py` depends on `from . import device_profile`; `device_profile.py` is still present in HEAD
+
+Both files remain unimported by any other code in HEAD (no caller needs them yet). The Qianwen third-party integration path is still in the deferred list; this restore simply returns the source module to the working tree so future Qianwen work has its existing implementation available. The battery module was never wired into the bridge UI; it remains available as a future-feature scaffold.
+
 ## In progress
 
 - Nothing — Phase 3 native path is "usable after the refactor". Next iteration cycles per the user's "快速完成重构 + 软件健壮" balance: pick up one bug at a time from the deferred list as it surfaces, do not try to perfect everything in one session.
