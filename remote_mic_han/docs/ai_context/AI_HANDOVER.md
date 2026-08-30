@@ -5,8 +5,8 @@ last_updated: 2026-08-31T05:15:00+08:00
 agent: minimax-m3 handing off to next agent
 provider: minimax handing off to next
 model: minimax-m3 handing off to next
-git_commit_sha: fde9a1e
-current_phase: Phase 3 native path "usable after the refactor" — three Phase 3 closeout regressions corrected, real-acceptance partially observed (Step 1/2/7a PASS, Step 6/7b/Typeless/Qianwen deferred or not-reproducible), orphan-source audit restore (qianwen_physicalizer + rc003_battery_windows) completed
+git_commit_sha: b063ca2
+current_phase: Phase 3 native path "usable after the refactor" — three Phase 3 closeout regressions corrected (b802a33), orphan-source restore (fde9a1e), Typeless step 4 verified (b063ca2 session), Qianwen blocked at adapter SHA mismatch; remaining real-acceptance: Typeless steps 1/2/3 unverified, Step 6/7b not reproducible in healthy setup
 current_task: nothing code-side is blocking. Per the user's "快速完成重构 + 软件健壮" balance, future sessions should pick one deferred bug per cycle and iterate, not try to clear the whole list in one pass
 deadline: none hard; current sprint has shipped a working snapshot
 hardware_validation:
@@ -37,6 +37,11 @@ completed:
       * file-inventory diff 19a0004 -> HEAD found no further Phase 3 closeout regressions beyond the three above
       * signature/attribute audit + `__main__.py` import surface audit both clean (--dry-run smoke passes; __main__.py diff vs19a0004 is +74 lines of intentional Phase 1 native probe scaffold only)
       * two orphan source modules lost from working tree between 19a0004 and bf0818e (no git delete event): `qianwen_physicalizer.py` (254 lines) + `rc003_battery_windows.py` (201 lines) — restored byte-for-byte from 19a0004 to match the bridge_control_windows.py corrective-restore precedent; SHA verified identical; --dry-run + direct import both PASS
+  - Third-party validation this session (continued at b063ca2):
+      * Typeless — step 4 only verified (RC003 voice key opens Typeless; Notepad focus-switch + typing preserves Typeless session state). User-reported: "跑通了，使用rc语音键，可以调起". Steps 1 (no double-trigger on short press), 2 (5s HOLD mode), 3 (3× rapid toggle) NOT exercised in this session.
+      * Qianwen — deferred (structural). User's installed `QianwenIMEUiClient.exe` SHA-256 (`a6ab353a54f3cee288cefa421c4753e20058c6833eca2961426c6c52f9882af5`, 2026-08-28 build) does not match `qianwen_physicalizer.py:28`'s locked SHA-256 (`2ef313df4fce58b067a0b4751e47c1ce547dd25b35891efdc55ba397c6ae1b56`). The Frida adapter that bypasses the elevated KBDLLHOOKSTRUCT LLKHF_INJECTED check fails closed at `qianwen_physicalizer.py:191-193`. Unblocking requires a new Frida adapter + verification matrix — out of Phase 3 scope, would need its own ADR.
+  - PHASE3-REAL-ACCEPTANCE.md launch command fix (b063ca2):
+      * added `$env:PYTHONPATH = "<repo>/apps/windows/rc003/src;<repo>/build/Release"` to the launch-with-switch + restore-to-default sections. Without PYTHONPATH, the venv's python.exe cannot find `ovb_rc003` and the bridge fails with `No module named ovb_rc003`. Discovered while running the Typeless validation; doc-only fix.
 tests_run:
   - command: python tools/verify_phase3_production_routing.py (under apps/windows/rc003/.venv python 3.11.15)
     result: passed (19/19 assertions, including three _is_native=True C++-side checks; no NOTE/skipped rows)
