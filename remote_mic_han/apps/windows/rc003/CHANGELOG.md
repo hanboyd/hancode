@@ -2,13 +2,84 @@
 
 ## [Unreleased]
 
-### Phase 3 — VoiceController / ATVV 会话边界 + 释放消抖 + AUDIO_STOP 回退（C++ 迁移）
+### Phase 4 / Phase 5 / Phase 6（C++ 迁移）
 
-（待开始。范围：`apps/windows/rc003/src/ovb_rc003/atvv_session.py` 中
-的 VoiceController 状态机 / ATVV 会话边界 / 释放消抖（已落地的
-ADR-0003 Fix A/B/C）/ AUDIO_STOP 回退 / 关闭重试所有权；时间必须
-可注入；保留 Python/native 回退与单一会话 owner。不动 Phase 4 音频、
-Phase 5 Windows 输入、Phase 6 BLE。）
+（待开始。范围：Phase 4 音频、Phase 5 Windows 输入、Phase 6 BLE。
+Phase 3 已在 `0.4.0-candidate` 完成；本节保留作下一阶段入口。）
+
+---
+
+## [0.4.0-candidate] — 2026-08-30 — Phase 3 complete (VoiceController / ATVV session boundary)
+
+里程碑：9 阶段路线图第 3 阶段（C++/CPython 迁移第 5 区：
+VoiceController 状态机 + ATVV 会话边界 + 释放消抖 +
+AUDIO_STOP 2500 ms 稳定停止回退 + 关闭重试所有权）。版本号按
+`memory/cpp-migration-version-policy.md` Rule 2 bump
+`0.3.0-candidate → 0.4.0-candidate`，同步 `CMakeLists.txt` 的
+`project(VERSION ...)`、`apps/windows/rc003/src/ovb_rc003/__init__.py`
+的 `__version__`、`apps/windows/rc003/pyproject.toml` 的 `version`。
+`installer/RemoteMicRC003Setup.iss` 的 `AppVersion` 故意不动
+（per Rule 1 — packaging 留给 phase 8）。
+
+状态对象 shipping 路径仍不掺入（产品路径继续走 Python
+`VoiceController` / `VoiceEdgeDebouncer` / `ATVVSession`，通过
+`REMOTEMIC_NATIVE_CHOICE_VOICE_CONTROLLER=shadow` /
+`..._VOICE_EDGE_DEBOUNCER=shadow` /
+`..._ATVV_SESSION=shadow` 三个新 module key 验证 python ↔ native
+字节级一致；默认全部 `python`）。
+
+详见 [ADR-0013](../../docs/decisions/ADR-0013-phase3-session-state-machine-boundary.md)
+第 1-9 节 + Phase 3 step 1-6 commits。
+
+### Phase 3 / Area — VoiceController / ATVV session 边界 + 释放消抖 + AUDIO_STOP 回退（C++ 迁移）
+
+完成 Phase 3（ADR-0013）：把 Python 基线
+`ovb_rc003.voice_controller.VoiceController`、
+`ovb_rc003.voice_edge_debouncer.VoiceEdgeDebouncer`、
+`ovb_rc003.atvv_session.ATVVSession` 三者的状态机行为迁移到
+C++：
+
+- `remotemic::voice::VoiceController` — Toggle/Hold 二选 + holding /
+  toggle_active 两个状态位；`on_mic_button_pressed` /
+  `on_audio_stopped` / `reset` / `restore_pending` /
+  `cancel_pending` 一一对应 python 实现；`restore_pending` 仅接受
+  KeyUp / Tap 两种关闭动作形态（XRBM-019 close-retry ownership）。
+- `remotemic::voice::VoiceEdgeDebouncer` — 200 ms 默认释放窗口（可注入
+  `[50ms, 500ms]` 区间），mutex 保护 + `release_seq` 单调计数器使 in-flight
+  handler 在新 release 或 `shutdown` 之后失效；`ClockFn` /
+  `TimerFactory` 全部可注入（C++ 端默认 noop；bridge wrapper
+  提供 `threading.Timer` 桥接）。
+- `remotemic::atvv::Session` — `handle_control` 派发 Caps /
+  MicButton / AudioStart / AudioStop / AudioSync / Unknown 六种
+  事件；late-audio guard 通过注入的 `ClockFn` 暴露（默认
+  2500 ms = `LATE_AUDIO_GUARD_SECONDS`）；`handle_audio` 串起
+  Phase 2 的 PCM 管线（FrameAccumulator → ImaDecoder →
+  DcHighPassFilter → postprocess），caps 变化时按 sample_rate
+  重建 DcHighPassFilter。`mic_open_command` /
+  `mic_close_command` 携带协商版本号 + 最近 session_id，与 Python
+  实现字节级一致。
+
+Python ↔ C++ 字节级一致（无容差）：
+
+- 8 个 VoiceController 状态机脚本（press / stop / reset /
+  restore_pending / cancel_pending × Toggle / Hold 组合）
+- 5 个 VoiceEdgeDebouncer 脚本（release / press / shutdown /
+  fire × 多次 release / release-press-release）
+- 4 个 ATVVSession 脚本（caps + start + stop / mic_button /
+  short audio_sync / caps+start+stop+audio inside late-audio guard）
+
+门禁（ADR-0013 §6 + cpp-migration-version-policy.md Rule 1/2，
+全部满足）：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| G1 (C++) | `ctest -C Debug   -R '^(remotemic_voice_controller_tests\|remotemic_edge_debouncer_tests\|remotemic_session_tests)\$'` | 3/3 通过 |
+| G1 (C++) | `ctest -C Release -R '^(remotemic_voice_controller_tests\|remotemic_edge_debouncer_tests\|remotemic_session_tests)\$'` | 3/3 通过 |
+| G2 (Phase 2 全部 4 区不退化) | `ctest -C Debug   -R '^(remotemic_unit_tests\|remotemic_atvv_tests\|remotemic_atvv_control_tests\|remotemic_adpcm_ima_tests\|remotemic_adpcm_dc_tests\|remotemic_adpcm_postprocess_tests\|remotemic_adpcm_frame_tests)\$'` | 7/7 通过 |
+| G3 (binding smoke) | `ctest -C Debug   -R '^(remotemic_voice_controller_bind_smoke\|remotemic_voice_edge_debouncer_bind_smoke\|remotemic_atvv_session_bind_smoke)\$'` | 3/3 通过 |
+| G5 (shadow parity) | `ctest -C Debug   -R '^(remotemic_voice_controller_native_parity\|remotemic_voice_edge_debouncer_native_parity\|remotemic_atvv_session_native_parity)\$'` | 3/3 通过 |
+| G6 (native switch + fake backend) | `ctest -C Debug   -R '^remotemic_phase3_native_switch\$'` | 1/1 通过 |
+| 总计 | `ctest -C Debug` | 24/24 通过 |
 
 ---
 

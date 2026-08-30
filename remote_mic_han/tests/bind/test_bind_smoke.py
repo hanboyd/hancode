@@ -23,7 +23,7 @@ class BindSmokeTests(unittest.TestCase):
     def test_value_type_round_trip(self) -> None:
         info = rn.probe_value_type()
         self.assertEqual(info.product, "RemoteMicWindows")
-        self.assertEqual(info.version, "0.3.0")
+        self.assertEqual(info.version, "0.4.0")
         self.assertEqual(info.build_number, 1)
 
     def test_shared_ptr_round_trip(self) -> None:

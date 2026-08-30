@@ -1,6 +1,6 @@
 # ADR-0013: Phase 3 — VoiceController / ATVV 会话边界 / 释放消抖 / AUDIO_STOP 回退 / 关闭重试所有权的 C++ 迁移边界
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-08-30
 - Phase: 3 (of 9, per `docs/architecture/cpp-migration-execution-plan.md`)
 - Related: [ADR-0003](ADR-0003-voice-edge-debounce-and-hook-decoupling.md)（语音边沿消抖与钩子解耦，已接受）、[ADR-0011](ADR-0011-cpp-python-binding-and-error-model.md)（Python/C++ 绑定与错误模型）、[ADR-0012](ADR-0012-atvv-adpcm-phase2-boundary.md)（Phase 2 ATVV/ADPCM 4 区）
