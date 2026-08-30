@@ -35,6 +35,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RC003_SRC = REPO_ROOT / "apps" / "windows" / "rc003" / "src"
+BUILD_RELEASE = REPO_ROOT / "build" / "Release"
 
 # Each scenario is a one-liner Python script. Each constructs a fresh
 # RC003App (with a temp config root + owned event loop, mirroring the
@@ -127,7 +128,18 @@ finally:
 
 def _run_scenario(label: str, env_overrides: dict[str, str] | None) -> dict:
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(RC003_SRC) + os.pathsep + env.get("PYTHONPATH", "")
+    # Build/Release must come BEFORE rc003/src on PYTHONPATH: the source
+    # tree at apps/windows/rc003/src/remotemic_native/ contains an
+    # __init__.py but NO _C.pyd (the .pyd is staged next to it under
+    # build/Release/ at install time). Putting the source dir first
+    # would let Python find the source __init__.py, hit ImportError on
+    # the missing _C.pyd, and report _C_AVAILABLE=False - defeating
+    # the C++ side assertions we need to actually run.
+    pythonpath_parts = [str(BUILD_RELEASE), str(RC003_SRC)]
+    parent_pp = env.get("PYTHONPATH", "")
+    if parent_pp:
+        pythonpath_parts.append(parent_pp)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
     if env_overrides:
         for k, v in env_overrides.items():
             env[k] = v
