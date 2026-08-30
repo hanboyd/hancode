@@ -24,7 +24,9 @@ RC003 / Typeless / Qianwen acceptance deferred。** Phase 3 不视为
 `installer/RemoteMicRC003Setup.iss` 的 `AppVersion` 故意不动
 （per Rule 1 — packaging 留给 phase 8）。即使真机验收 deferred，
 版本号不回退，因为它跟踪的是 implementation+test 状态；后续若
-真机验收发现 regression，可单独 bump 到 0.4.1-candidate。
+真机验收发现 regression，按既定策略处理：先修复 + 复测，再按
+`memory/cpp-migration-version-policy.md` Rule 1/2 决定是否需要
+patch bump，而不是预先设定。
 
 **范围**：9 阶段路线图第 3 阶段（C++/CPython 迁移第 5 区：
 VoiceController 状态机 + ATVV 会话边界 + 释放消抖 +
