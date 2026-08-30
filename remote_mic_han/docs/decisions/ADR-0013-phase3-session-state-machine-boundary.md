@@ -1,6 +1,11 @@
 # ADR-0013: Phase 3 — VoiceController / ATVV 会话边界 / 释放消抖 / AUDIO_STOP 回退 / 关闭重试所有权的 C++ 迁移边界
 
-- Status: accepted
+- Status: **proposed, awaiting real acceptance**
+  - Implementation contract + automated gates (G1/G2/G3/G5/G6) all green per the `[0.4.0-candidate]` CHANGELOG entry (24/24 ctest Debug + 24/24 ctest Release). Status flips to **accepted** only after:
+    - RC003 真机端到端至少跑一次 mic press → AudioStart → AudioStop → host hotkey 路径并观察
+    - Typeless 集成验收（语音快捷键落入 Typeless 输入路径）至少跑一次
+    - Qianwen 集成验收（流式 PCM 经过 Session 边界后到达 Qianwen ASR）至少跑一次
+  - 在这三块完成前，Phase 3 视为 *implementation complete* 而非 *fully closed*；版本号 `0.4.0-candidate` 不回退，但语义上不能误读为"Phase 3 已完全关闭"。
 - Date: 2026-08-30
 - Phase: 3 (of 9, per `docs/architecture/cpp-migration-execution-plan.md`)
 - Related: [ADR-0003](ADR-0003-voice-edge-debounce-and-hook-decoupling.md)（语音边沿消抖与钩子解耦，已接受）、[ADR-0011](ADR-0011-cpp-python-binding-and-error-model.md)（Python/C++ 绑定与错误模型）、[ADR-0012](ADR-0012-atvv-adpcm-phase2-boundary.md)（Phase 2 ATVV/ADPCM 4 区）

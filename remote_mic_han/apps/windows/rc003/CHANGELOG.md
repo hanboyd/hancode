@@ -5,23 +5,32 @@
 ### Phase 4 / Phase 5 / Phase 6（C++ 迁移）
 
 （待开始。范围：Phase 4 音频、Phase 5 Windows 输入、Phase 6 BLE。
-Phase 3 已在 `0.4.0-candidate` 完成；本节保留作下一阶段入口。）
+Phase 3 已在 `0.4.0-candidate` 完成自动化门禁；真机 / Typeless /
+Qianwen 验收 deferred；本节保留作下一阶段入口。）
 
 ---
 
-## [0.4.0-candidate] — 2026-08-30 — Phase 3 complete (VoiceController / ATVV session boundary)
+## [0.4.0-candidate] — 2026-08-30 — Phase 3 implementation complete (automated gates passed; real RC003 / Typeless / Qianwen acceptance deferred)
 
-里程碑：9 阶段路线图第 3 阶段（C++/CPython 迁移第 5 区：
-VoiceController 状态机 + ATVV 会话边界 + 释放消抖 +
-AUDIO_STOP 2500 ms 稳定停止回退 + 关闭重试所有权）。版本号按
-`memory/cpp-migration-version-policy.md` Rule 2 bump
-`0.3.0-candidate → 0.4.0-candidate`，同步 `CMakeLists.txt` 的
-`project(VERSION ...)`、`apps/windows/rc003/src/ovb_rc003/__init__.py`
-的 `__version__`、`apps/windows/rc003/pyproject.toml` 的 `version`。
+**阶段状态：implementation complete；automated gates passed；real
+RC003 / Typeless / Qianwen acceptance deferred。** Phase 3 不视为
+完全关闭，直至真机 + Typeless + Qianwen 至少各跑过一次并观察。
+
+**版本号说明**：按 `memory/cpp-migration-version-policy.md` Rule 2
+预先 bump `0.3.0-candidate → 0.4.0-candidate`，同步
+`CMakeLists.txt` 的 `project(VERSION ...)`、
+`apps/windows/rc003/src/ovb_rc003/__init__.py` 的 `__version__`、
+`apps/windows/rc003/pyproject.toml` 的 `version`。
 `installer/RemoteMicRC003Setup.iss` 的 `AppVersion` 故意不动
-（per Rule 1 — packaging 留给 phase 8）。
+（per Rule 1 — packaging 留给 phase 8）。即使真机验收 deferred，
+版本号不回退，因为它跟踪的是 implementation+test 状态；后续若
+真机验收发现 regression，可单独 bump 到 0.4.1-candidate。
 
-状态对象 shipping 路径仍不掺入（产品路径继续走 Python
+**范围**：9 阶段路线图第 3 阶段（C++/CPython 迁移第 5 区：
+VoiceController 状态机 + ATVV 会话边界 + 释放消抖 +
+AUDIO_STOP 2500 ms 稳定停止回退 + 关闭重试所有权）。
+
+**状态对象 shipping 路径仍不掺入**（产品路径继续走 Python
 `VoiceController` / `VoiceEdgeDebouncer` / `ATVVSession`，通过
 `REMOTEMIC_NATIVE_CHOICE_VOICE_CONTROLLER=shadow` /
 `..._VOICE_EDGE_DEBOUNCER=shadow` /
@@ -69,17 +78,38 @@ Python ↔ C++ 字节级一致（无容差）：
   short audio_sync / caps+start+stop+audio inside late-audio guard）
 
 门禁（ADR-0013 §6 + cpp-migration-version-policy.md Rule 1/2，
-全部满足）：
+全部通过）：
 
 | 门禁 | 命令 | 结果 |
 |---|---|---|
 | G1 (C++) | `ctest -C Debug   -R '^(remotemic_voice_controller_tests\|remotemic_edge_debouncer_tests\|remotemic_session_tests)\$'` | 3/3 通过 |
 | G1 (C++) | `ctest -C Release -R '^(remotemic_voice_controller_tests\|remotemic_edge_debouncer_tests\|remotemic_session_tests)\$'` | 3/3 通过 |
 | G2 (Phase 2 全部 4 区不退化) | `ctest -C Debug   -R '^(remotemic_unit_tests\|remotemic_atvv_tests\|remotemic_atvv_control_tests\|remotemic_adpcm_ima_tests\|remotemic_adpcm_dc_tests\|remotemic_adpcm_postprocess_tests\|remotemic_adpcm_frame_tests)\$'` | 7/7 通过 |
+| G2 (Phase 2 全部 4 区不退化) | `ctest -C Release -R '^(remotemic_unit_tests\|remotemic_atvv_tests\|remotemic_atvv_control_tests\|remotemic_adpcm_ima_tests\|remotemic_adpcm_dc_tests\|remotemic_adpcm_postprocess_tests\|remotemic_adpcm_frame_tests)\$'` | 7/7 通过 |
 | G3 (binding smoke) | `ctest -C Debug   -R '^(remotemic_voice_controller_bind_smoke\|remotemic_voice_edge_debouncer_bind_smoke\|remotemic_atvv_session_bind_smoke)\$'` | 3/3 通过 |
+| G3 (binding smoke) | `ctest -C Release -R '^(remotemic_voice_controller_bind_smoke\|remotemic_voice_edge_debouncer_bind_smoke\|remotemic_atvv_session_bind_smoke)\$'` | 3/3 通过 |
 | G5 (shadow parity) | `ctest -C Debug   -R '^(remotemic_voice_controller_native_parity\|remotemic_voice_edge_debouncer_native_parity\|remotemic_atvv_session_native_parity)\$'` | 3/3 通过 |
+| G5 (shadow parity) | `ctest -C Release -R '^(remotemic_voice_controller_native_parity\|remotemic_voice_edge_debouncer_native_parity\|remotemic_atvv_session_native_parity)\$'` | 3/3 通过 |
 | G6 (native switch + fake backend) | `ctest -C Debug   -R '^remotemic_phase3_native_switch\$'` | 1/1 通过 |
+| G6 (native switch + fake backend) | `ctest -C Release -R '^remotemic_phase3_native_switch\$'` | 1/1 通过 |
 | 总计 | `ctest -C Debug` | 24/24 通过 |
+| 总计 | `ctest -C Release` | 24/24 通过 |
+
+### 真机 / 第三方验收（**deferred**）
+
+以下三块尚未在本会话环境中真实执行并观察，因此记为 deferred。
+**Phase 3 不视为完全关闭**直至这三块至少各跑过一次：
+
+| 验收项 | 状态 | 说明 |
+|---|---|---|
+| RC003 真机端到端 | **deferred** | 当前环境无 RC003 设备 / 未真实跑一次物理 mic press → AudioStart → AudioStop → host hotkey 路径。状态机迁移是否引入回归需要真机观察。 |
+| Typeless 集成验收 | **deferred** | Typeless 工具未在本环境内运行；语音快捷键落入 Typeless 输入路径的端到端 flow 未真实观察。 |
+| Qianwen 集成验收 | **deferred** | Qianwen 集成未在本环境内运行；流式 PCM 经过 VoiceController / Session 边界后到达 Qianwen ASR 的端到端 flow 未真实观察。 |
+
+只有在这三块至少各跑过一次、observation 记录在 issues / log
+后，才能把 `deferred` 改为 `passed`，并在后续 PR 中正式把 Phase 3
+标记为完全关闭。当前版本 `0.4.0-candidate` 不回退，但**也不能**
+误读为"Phase 3 已完全 closed"。
 
 ---
 
