@@ -15,12 +15,17 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <span>
 #include <variant>
 #include <vector>
 
 #include "remotemic/atvv/capabilities.hpp"
 #include "remotemic/atvv/control.hpp"
+
+#include "remotemic/adpcm/dc_highpass.hpp"
+#include "remotemic/adpcm/frame_accumulator.hpp"
+#include "remotemic/adpcm/ima_decoder.hpp"
 
 namespace remotemic::atvv {
 
@@ -97,6 +102,12 @@ private:
     bool mic_open_ = false;
     std::optional<std::chrono::milliseconds> last_mic_off_at_;
     std::optional<std::uint8_t> last_session_id_;
+
+    // Owned ADPCM pipeline. Rebuilt (in place) when caps change the
+    // negotiated sample rate; reset on AUDIO_START.
+    std::unique_ptr<adpcm::ImaDecoder> decoder_;
+    std::unique_ptr<adpcm::DcHighPassFilter> dc_filter_;
+    std::unique_ptr<adpcm::FrameAccumulator> accumulator_;
 };
 
 }  // namespace remotemic::atvv

@@ -54,6 +54,12 @@ _DEFAULT_CHOICES: dict[str, ImplementationChoice] = {
     "adpcm_dc_highpass": "python",
     "adpcm_postprocess": "python",
     "adpcm_frame_accumulator": "python",
+    # Phase 3 / ADR-0013 §3.1-§3.3: voice controller, release-window
+    # debouncer, and ATVV session state machines. All three keep the
+    # default "python" until step 5 flips a single-session owner.
+    "voice_controller": "python",
+    "voice_edge_debouncer": "python",
+    "atvv_session": "python",
 }
 
 _ENV_PREFIX = "REMOTEMIC_NATIVE_CHOICE_"

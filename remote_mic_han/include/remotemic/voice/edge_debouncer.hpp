@@ -69,6 +69,14 @@ public:
     bool fire_pending_now_for_test() noexcept;
 
 private:
+    // Timer-fire handler. Acquires ``lock_``, validates the in-flight
+    // ``release_seq`` against the current ``release_seq_``, and runs
+    // the pending handler if it still belongs to the most recent
+    // release. Lock is released before the handler runs so a long
+    // handler can't deadlock against an on_press / shutdown arriving
+    // on the worker thread.
+    void _run_handler() noexcept;
+
     std::chrono::milliseconds release_window_;
     TimerFactory factory_;
     ClockFn clock_;

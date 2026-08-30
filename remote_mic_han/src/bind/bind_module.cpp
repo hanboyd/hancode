@@ -1,15 +1,20 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/chrono.h>
 #include <pybind11/functional.h>
 #include <pybind11/stl.h>
+#include <pybind11/stl_bind.h>
 
 #include "remotemic/bind/errors.hpp"
 #include "remotemic/bind/probe_types.hpp"
 #include "remotemic/atvv/capabilities.hpp"
 #include "remotemic/atvv/control.hpp"
+#include "remotemic/atvv/session.hpp"
 #include "remotemic/adpcm/ima_decoder.hpp"
 #include "remotemic/adpcm/dc_highpass.hpp"
 #include "remotemic/adpcm/postprocess.hpp"
 #include "remotemic/adpcm/frame_accumulator.hpp"
+#include "remotemic/voice/voice_controller.hpp"
+#include "remotemic/voice/edge_debouncer.hpp"
 
 #include <variant>
 
@@ -29,6 +34,7 @@ PYBIND11_MODULE(_C, m) {
 
     // ------------------------------------------------------------------
     // Error translation. Per ADR-0011 §2:
+    //   - std::invalid_argument becomes ValueError carrying what()
     //   - remotemic::Error becomes a RuntimeError carrying what()
     //   - any other std::exception also becomes RuntimeError with what()
     //   - nothing is silently swallowed
@@ -41,6 +47,11 @@ PYBIND11_MODULE(_C, m) {
             if (p) {
                 std::rethrow_exception(p);
             }
+        } catch (const std::invalid_argument& e) {
+            // Match the python-baseline's ValueError contract for
+            // argument-validation failures (e.g. release_window out
+            // of [50ms, 500ms] in VoiceEdgeDebouncer).
+            PyErr_SetString(PyExc_ValueError, e.what());
         } catch (const Error&) {
             // Distinguish from generic std::exception by re-throwing inside.
             try {
@@ -401,4 +412,210 @@ PYBIND11_MODULE(_C, m) {
              "not throw.")
         .def_property_readonly("pending_size",
                                &adpcm::FrameAccumulator::pending_size);
+
+    // ------------------------------------------------------------------
+    // 9. VoiceController + VoiceEdgeDebouncer (Phase 3 / ADR-0013 §3.1,
+    //    §3.2). Both are state machines mirroring
+    //    apps/windows/rc003/src/ovb_rc003/voice_controller.py and
+    //    voice_edge_debouncer.py. Time-injection + TimerFactory are
+    //    intentionally NOT exposed at the binding seam: the bridge
+    //    wrapper provides a std::thread-backed TimerFactory internally
+    //    so production behavior matches the Python implementation, and
+    //    tests can drive the C++ side through the python (pure) impl.
+    // ------------------------------------------------------------------
+    py::enum_<voice::VoiceTriggerMode>(m, "VoiceTriggerMode")
+        .value("Toggle", voice::VoiceTriggerMode::Toggle)
+        .value("Hold",   voice::VoiceTriggerMode::Hold);
+
+    py::enum_<voice::VoiceHostAction>(m, "VoiceHostAction")
+        .value("Tap",     voice::VoiceHostAction::Tap)
+        .value("KeyDown", voice::VoiceHostAction::KeyDown)
+        .value("KeyUp",   voice::VoiceHostAction::KeyUp);
+
+    py::class_<voice::VoiceController>(m, "VoiceController")
+        .def(py::init<voice::VoiceTriggerMode>(),
+             py::arg("mode") = voice::VoiceTriggerMode::Toggle)
+        .def("on_mic_button_pressed",
+             &voice::VoiceController::on_mic_button_pressed,
+             "React to the device's own MIC_BUTTON control opcode.\n"
+             "Returns the host action that the caller must dispatch\n"
+             "(Tap for TOGGLE press, KeyDown for HOLD press).")
+        .def("on_audio_stopped",
+             &voice::VoiceController::on_audio_stopped,
+             "React to the device's own AUDIO_STOP control opcode.\n"
+             "Returns the closing action (Tap for TOGGLE, KeyUp for\n"
+             "HOLD) or None if no session is currently open.")
+        .def("reset", &voice::VoiceController::reset,
+             "Force any outstanding session closed (e.g. on\n"
+             "disconnect/shutdown). Returns the closing action that\n"
+             "the caller must dispatch, or None if nothing was owed.\n"
+             "``active`` is False immediately after this returns.")
+        .def("restore_pending",
+             &voice::VoiceController::restore_pending,
+             py::arg("action"),
+             "Undo ``reset`` / ``on_audio_stopped``'s eager state-\n"
+             "clearing when the closing action failed to deliver\n"
+             "(XRBM-019). Only KeyUp and Tap are accepted; passing\n"
+             "KeyDown is a caller bug and is silently ignored.")
+        .def("cancel_pending",
+             &voice::VoiceController::cancel_pending,
+             "Clear an outstanding session WITHOUT emitting a\n"
+             "compensating host action (e.g. when the opening\n"
+             "delivery itself failed).")
+        .def_property_readonly("holding", &voice::VoiceController::holding)
+        .def_property_readonly("active",  &voice::VoiceController::active);
+
+    py::class_<voice::VoiceEdgeDebouncer>(m, "VoiceEdgeDebouncer")
+        .def(py::init([](std::int64_t release_window_ms) {
+                 return std::make_unique<voice::VoiceEdgeDebouncer>(
+                     std::chrono::milliseconds(release_window_ms));
+             }),
+             py::arg("release_window_ms") = 200,
+             "Construct a release-window debouncer. The C++ side\n"
+             "plugs a no-op TimerFactory at the binding seam; the\n"
+             "Python bridge wrapper supplies a std::thread-backed\n"
+             "factory so production timing matches the python\n"
+             "baseline. release_window must be in [50ms, 500ms].")
+        .def("on_press", &voice::VoiceEdgeDebouncer::on_press,
+             "Cancel any pending release. No-op if nothing pending.")
+        .def("on_release",
+             [](voice::VoiceEdgeDebouncer& self,
+                std::function<void()> handler) {
+                self.on_release(std::move(handler));
+             },
+             py::arg("handler"),
+             "Schedule ``handler`` after release_window. With the\n"
+             "binding's no-op timer factory the handler is held in\n"
+             "memory; a press / shutdown arriving first cancels it.")
+        .def("shutdown", &voice::VoiceEdgeDebouncer::shutdown,
+             "Cancel any pending release so a worker thread can\n"
+             "exit cleanly.")
+        .def("fire_pending_now_for_test",
+             &voice::VoiceEdgeDebouncer::fire_pending_now_for_test,
+             "Test-only: synchronously fire the pending handler.\n"
+             "Returns True if a handler was fired.")
+        .def_property_readonly(
+            "release_window_ms",
+            [](const voice::VoiceEdgeDebouncer& self) {
+                return static_cast<std::int64_t>(
+                    self.release_window().count());
+            });
+
+    // ------------------------------------------------------------------
+    // 10. ATVV Session (Phase 3 / ADR-0013 §3.3). Mirrors
+    //     apps/windows/rc003/src/ovb_rc003/atvv_session.py:149-249,
+    //     wiring the existing Phase 2 decoders
+    //     (FrameAccumulator -> ImaDecoder -> DcHighPassFilter ->
+    //     postprocess) lazily when caps arrive. ``handle_control``
+    //     returns a tagged dict matching the existing
+    //     ``atvv_control_parse`` contract (Area 2) so the Python
+    //     bridge can compare Python-vs-native without tolerance.
+    // ------------------------------------------------------------------
+    py::class_<atvv::CapsReceived>(m, "AtvvSessionCapsReceived")
+        .def_readonly("capabilities", &atvv::CapsReceived::capabilities);
+
+    py::class_<atvv::MicButtonPressed>(m, "AtvvSessionMicButtonPressed");
+
+    py::class_<atvv::AudioStarted>(m, "AtvvSessionAudioStarted")
+        .def_readonly("session_id", &atvv::AudioStarted::session_id);
+
+    py::class_<atvv::AudioStopped>(m, "AtvvSessionAudioStopped");
+
+    py::class_<atvv::AudioSynced>(m, "AtvvSessionAudioSynced");
+
+    py::class_<atvv::UnknownControl>(m, "AtvvSessionUnknownControl")
+        .def_readonly("opcode", &atvv::UnknownControl::opcode);
+
+    py::class_<atvv::Session>(m, "AtvvSession")
+        .def(py::init<double>(),
+             py::arg("gain_db") = 10.0,
+             "Construct a session with the given dB gain and\n"
+             "the production default late-audio guard (2500 ms).")
+        .def(py::init<double, std::chrono::milliseconds,
+                      std::function<std::chrono::milliseconds()>>(),
+             py::arg("gain_db"),
+             py::arg("late_audio_guard_ms"),
+             py::arg("clock"),
+             "Test-only constructor exposing the late-audio guard\n"
+             "and an injected monotonic clock so unit tests can\n"
+             "advance time without sleeping.")
+        .def_property_readonly(
+            "capabilities",
+            [](const atvv::Session& s) -> const atvv::Capabilities* {
+                return s.capabilities();
+            },
+            "Negotiated ATVV capabilities, or None if no CAPS has\n"
+            "arrived yet.")
+        .def_property_readonly("mic_open", &atvv::Session::mic_open)
+        .def("handle_control",
+             [](atvv::Session& s, py::bytes data) -> py::dict {
+                 const std::string_view view = data;
+                 std::span<const std::uint8_t> bytes(
+                     reinterpret_cast<const std::uint8_t*>(view.data()),
+                     view.size());
+                 auto event = s.handle_control(bytes);
+                 py::dict out;
+                 if (std::holds_alternative<atvv::CapsReceived>(event)) {
+                     const auto& e = std::get<atvv::CapsReceived>(event);
+                     out["opcode"] = "Caps";
+                     out["capabilities"] = e.capabilities;
+                 } else if (std::holds_alternative<
+                                atvv::MicButtonPressed>(event)) {
+                     out["opcode"] = "MicButton";
+                 } else if (std::holds_alternative<atvv::AudioStarted>(
+                                event)) {
+                     const auto& e = std::get<atvv::AudioStarted>(event);
+                     out["opcode"] = "AudioStart";
+                     if (e.session_id.has_value()) {
+                         out["session_id"] = py::int_(*e.session_id);
+                     } else {
+                         out["session_id"] = py::none();
+                     }
+                 } else if (std::holds_alternative<atvv::AudioStopped>(
+                                event)) {
+                     out["opcode"] = "AudioStop";
+                 } else if (std::holds_alternative<atvv::AudioSynced>(
+                                event)) {
+                     out["opcode"] = "AudioSync";
+                 } else {
+                     const auto& e =
+                         std::get<atvv::UnknownControl>(event);
+                     out["opcode"] = "Unknown";
+                     out["raw_opcode"] = e.opcode;
+                 }
+                 return out;
+             },
+             py::arg("payload"),
+             "Dispatch a device->host control payload. Returns a\n"
+             "dict with an 'opcode' key plus per-opcode fields\n"
+             "matching the Phase 2 / Area 2 contract.")
+        .def("handle_audio",
+             [](atvv::Session& s, py::bytes data) -> std::vector<std::int16_t> {
+                 const std::string_view view = data;
+                 std::span<const std::uint8_t> bytes(
+                     reinterpret_cast<const std::uint8_t*>(view.data()),
+                     view.size());
+                 return s.handle_audio(bytes);
+             },
+             py::arg("payload"),
+             "Decode one audio notification. Returns [] while the\n"
+             "mic is closed AND inside the late-audio guard; once\n"
+             "the guard expires, audio samples flow through the\n"
+             "PCM pipeline.")
+        .def("mic_open_command",
+             [](const atvv::Session& s) -> py::bytes {
+                 const auto v = s.mic_open_command();
+                 return py::bytes(
+                     reinterpret_cast<const char*>(v.data()), v.size());
+             },
+             "Encode host->device MIC_OPEN command carrying the\n"
+             "negotiated protocol version.")
+        .def("mic_close_command",
+             [](const atvv::Session& s) -> py::bytes {
+                 const auto v = s.mic_close_command();
+                 return py::bytes(
+                     reinterpret_cast<const char*>(v.data()), v.size());
+             },
+             "Encode host->device MIC_CLOSE command carrying the\n"
+             "negotiated protocol version + last-seen session_id.");
 }

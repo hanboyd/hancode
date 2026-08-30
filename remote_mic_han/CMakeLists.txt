@@ -6,6 +6,28 @@ option(REMOTEMIC_BUILD_TESTS "Build hardware-free C++ tests" ON)
 option(REMOTEMIC_BUILD_PYTHON "Build the CPython binding extension" OFF)
 option(REMOTEMIC_PYBIND11_FETCH "Fetch pybind11 via FetchContent (else find_package)" ON)
 
+# Resolve the project's pinned CPython 3.11 venv interpreter BEFORE any
+# ``add_test(... ${Python3_EXECUTABLE} ...)`` call. CMake evaluates
+# ``${Python3_EXECUTABLE}`` at configure time when ``add_test`` is
+# processed; a ``find_package(Python3 ...)`` after the test
+# registrations leaves the variable empty in the generated
+# CTestTestfile.cmake (manifested as ``-m`` being treated as the
+# executable and ctest failing with "Could not find executable -m").
+if(REMOTEMIC_BUILD_PYTHON)
+    set(Python3_EXECUTABLE
+        "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/.venv/Scripts/python.exe"
+        CACHE FILEPATH "CPython 3.11 interpreter from the project venv"
+    )
+    # Pin pybind11's internal uppercase view to the venv shim. The shim
+    # calls into the uv-installed CPython 3.11 base; pybind11 queries it
+    # via sysconfig and discovers the correct include/lib paths and ABI
+    # tag (.cp311-win_amd64.pyd). Without this override pybind11 picks the
+    # first Python on PATH (here, mise-installed 3.14) and stamps cp314.
+    set(PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "" FORCE)
+    set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "" FORCE)
+    find_package(Python3 3.11 COMPONENTS Interpreter Development REQUIRED)
+endif()
+
 # ---------------------------------------------------------------------------
 # Pure core: protocol/session/queue/config types only.
 # No <fstream>, no <windows.h>, no env-var reads, no filesystem writes.
@@ -455,6 +477,48 @@ if(REMOTEMIC_BUILD_TESTS)
         set_tests_properties(remotemic_adpcm_frame_bind_smoke PROPERTIES
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
+
+        # Phase 3 / ADR-0013 step 3: voice + ATVV session binding
+        # smokes. Each loads the bundled .pyd, creates a fresh
+        # instance, and asserts the binding surface / returned dict
+        # shape matches the Python baseline (apps/windows/rc003/src/
+        # ovb_rc003/voice_controller.py, voice_edge_debouncer.py,
+        # atvv_session.py).
+        add_test(
+            NAME remotemic_voice_controller_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_voice_controller_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_voice_controller_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
+
+        add_test(
+            NAME remotemic_voice_edge_debouncer_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_voice_edge_debouncer_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_voice_edge_debouncer_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
+
+        add_test(
+            NAME remotemic_atvv_session_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_atvv_session_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_atvv_session_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
     endif()
 endif()
 
@@ -464,22 +528,12 @@ endif()
 # into the remotemic_native Python extension module.
 # ---------------------------------------------------------------------------
 if(REMOTEMIC_BUILD_PYTHON)
-    # Find the project's pinned CPython 3.11 BEFORE pulling pybind11 so
-    # Python3_VERSION reflects the venv interpreter. Pybind11 caches its
-    # Python detection on first find_package and a later override does not
-    # propagate to the .pyd ABI tag.
-    set(Python3_EXECUTABLE
-        "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/.venv/Scripts/python.exe"
-        CACHE FILEPATH "CPython 3.11 interpreter from the project venv"
-    )
-    # Pin pybind11's internal uppercase view to the venv shim. The shim
-    # calls into the uv-installed CPython 3.11 base; pybind11 queries it
-    # via sysconfig and discovers the correct include/lib paths and ABI
-    # tag (.cp311-win_amd64.pyd). Without this override pybind11 picks the
-    # first Python on PATH (here, mise-installed 3.14) and stamps cp314.
-    set(PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "" FORCE)
-    set(Python_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "" FORCE)
-    find_package(Python3 3.11 COMPONENTS Interpreter Development REQUIRED)
+    # Python3_EXECUTABLE / PYTHON_EXECUTABLE / Python_EXECUTABLE were
+    # set + ``find_package(Python3 ...)`` already ran at the top of the
+    # file (before any ``add_test`` registration); CMake's
+    # ``add_test(NAME foo COMMAND ${Python3_EXECUTABLE} ...)`` needs
+    # the variable resolved at configure time, not later. The pybind11
+    # FetchContent block below reuses those cached values.
 
     if(REMOTEMIC_PYBIND11_FETCH)
         include(FetchContent)
@@ -519,7 +573,7 @@ if(REMOTEMIC_BUILD_PYTHON)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
     )
-    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm pybind11::pybind11)
+    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm remotemic_voice remotemic_session pybind11::pybind11)
 
     # Copy the public Python wrapper next to the compiled _C.pyd so the
     # build directory is a drop-in importable package.
