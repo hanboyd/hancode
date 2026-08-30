@@ -196,6 +196,37 @@ else()
     target_compile_options(remotemic_session PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# ---------------------------------------------------------------------------
+# Phase 4 / ADR-0014 step 1: bounded PCM queue + WASAPI AudioRoute
+# (stub). Pure C++ queue / chunker / upsampler are hardware-free;
+# WasapiAudioRoute stub returns false from start() to keep Windows-only
+# headers out of the test build until step 2 lands the real WASAPI
+# implementation. FakeAudioRoute is a recording double used by the
+# shadow parity tests (step 4) and by Linux/macOS CI.
+# ---------------------------------------------------------------------------
+add_library(remotemic_audio STATIC
+    src/audio/bounded_pcm_queue.cpp
+    src/audio/pcm_chunker.cpp
+    src/audio/upsample_16k_to_48k.cpp
+    src/audio/fake_audio_route.cpp
+    src/audio/wasapi_audio_route.cpp
+)
+
+target_include_directories(remotemic_audio
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(remotemic_audio PUBLIC remotemic_core)
+
+target_compile_features(remotemic_audio PUBLIC cxx_std_20)
+
+if(MSVC)
+    target_compile_options(remotemic_audio PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_audio PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 if(MSVC)
     target_compile_options(remotemic_platform_win32 PRIVATE /W4 /permissive- /EHsc /utf-8)
 else()
@@ -367,6 +398,69 @@ if(REMOTEMIC_BUILD_TESTS)
     endif()
     add_test(NAME remotemic_session_tests COMMAND remotemic_session_tests)
     set_tests_properties(remotemic_session_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 4 / ADR-0014 step 1: audio modules TDD red-state tests.
+    # Stub behavior makes every contract assertion FAIL on purpose; step
+    # 2 turns them green. See ADR-0014 section 8 (G1).
+    add_executable(remotemic_bounded_pcm_queue_tests tests/unit/test_bounded_pcm_queue.cpp)
+    target_link_libraries(remotemic_bounded_pcm_queue_tests PRIVATE remotemic_audio)
+    if(MSVC)
+        target_compile_options(remotemic_bounded_pcm_queue_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_bounded_pcm_queue_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_bounded_pcm_queue_tests COMMAND remotemic_bounded_pcm_queue_tests)
+    set_tests_properties(remotemic_bounded_pcm_queue_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(remotemic_pcm_chunker_tests tests/unit/test_pcm_chunker.cpp)
+    target_link_libraries(remotemic_pcm_chunker_tests PRIVATE remotemic_audio)
+    if(MSVC)
+        target_compile_options(remotemic_pcm_chunker_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_pcm_chunker_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_pcm_chunker_tests COMMAND remotemic_pcm_chunker_tests)
+    set_tests_properties(remotemic_pcm_chunker_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(remotemic_upsample_tests tests/unit/test_upsample_16k_to_48k.cpp)
+    target_link_libraries(remotemic_upsample_tests PRIVATE remotemic_audio)
+    if(MSVC)
+        target_compile_options(remotemic_upsample_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_upsample_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_upsample_tests COMMAND remotemic_upsample_tests)
+    set_tests_properties(remotemic_upsample_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(remotemic_fake_audio_route_tests tests/unit/test_fake_audio_route.cpp)
+    target_link_libraries(remotemic_fake_audio_route_tests PRIVATE remotemic_audio)
+    if(MSVC)
+        target_compile_options(remotemic_fake_audio_route_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_fake_audio_route_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_fake_audio_route_tests COMMAND remotemic_fake_audio_route_tests)
+    set_tests_properties(remotemic_fake_audio_route_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_executable(remotemic_wasapi_audio_route_tests tests/unit/test_wasapi_audio_route.cpp)
+    target_link_libraries(remotemic_wasapi_audio_route_tests PRIVATE remotemic_audio)
+    if(MSVC)
+        target_compile_options(remotemic_wasapi_audio_route_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_wasapi_audio_route_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_wasapi_audio_route_tests COMMAND remotemic_wasapi_audio_route_tests)
+    set_tests_properties(remotemic_wasapi_audio_route_tests PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
