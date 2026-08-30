@@ -5,7 +5,7 @@ last_updated: 2026-08-31T05:15:00+08:00
 agent: minimax-m3 handing off to next agent
 provider: minimax handing off to next
 model: minimax-m3 handing off to next
-git_commit_sha: pending (Phase 3 corrective commit about to land; see git log)
+git_commit_sha: b802a33
 current_phase: Phase 3 native path "usable after the refactor" — three Phase 3 closeout regressions corrected, real-acceptance partially observed (Step 1/2/7a PASS, Step 6/7b/Typeless/Qianwen deferred or not-reproducible)
 current_task: nothing code-side is blocking. Per the user's "快速完成重构 + 软件健壮" balance, future sessions should pick one deferred bug per cycle and iterate, not try to clear the whole list in one pass
 deadline: none hard; current sprint has shipped a working snapshot
