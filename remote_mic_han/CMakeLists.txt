@@ -116,6 +116,64 @@ add_library(remotemic_platform_win32 STATIC
 
 target_link_libraries(remotemic_platform_win32 PUBLIC remotemic_core)
 
+# ---------------------------------------------------------------------------
+# Phase 3 / ADR-0013: voice-edge pure logic.
+# Pure state machine + injectable timer; no <windows.h>, no I/O, no
+# threads of its own. Step 1 (this commit) ships the stub; step 2
+# fills in the real state machine.
+# ---------------------------------------------------------------------------
+add_library(remotemic_voice STATIC
+    src/voice/voice_controller.cpp
+    src/voice/edge_debouncer.cpp
+)
+
+target_include_directories(remotemic_voice
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(remotemic_voice PUBLIC remotemic_core)
+
+target_compile_features(remotemic_voice PUBLIC cxx_std_20)
+
+if(MSVC)
+    target_compile_options(remotemic_voice PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_voice PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ---------------------------------------------------------------------------
+# Phase 3 / ADR-0013: ATVV session state machine.
+# Pure value-class over the existing Phase 2 atvv + adpcm types.
+# No <windows.h>, no I/O, no threads of its own. Depends on both
+# ``remotemic_atvv`` (Capabilities + control parser) and
+# ``remotemic_adpcm`` (decoder + DC filter + postprocess +
+# FrameAccumulator); the dependency direction avoids a library cycle
+# because ``remotemic_adpcm`` does NOT need to know about Session.
+# ---------------------------------------------------------------------------
+add_library(remotemic_session STATIC
+    src/atvv/session.cpp
+)
+
+target_include_directories(remotemic_session
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(remotemic_session
+    PUBLIC
+        remotemic_atvv
+        remotemic_adpcm
+)
+
+target_compile_features(remotemic_session PUBLIC cxx_std_20)
+
+if(MSVC)
+    target_compile_options(remotemic_session PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_session PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 if(MSVC)
     target_compile_options(remotemic_platform_win32 PRIVATE /W4 /permissive- /EHsc /utf-8)
 else()
@@ -242,6 +300,51 @@ if(REMOTEMIC_BUILD_TESTS)
     endif()
     add_test(NAME remotemic_adpcm_frame_tests COMMAND remotemic_adpcm_frame_tests)
     set_tests_properties(remotemic_adpcm_frame_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 3 / ADR-0013 step 1: VoiceController TDD red-state
+    # tests. Stub returns the no-op default for every event so the
+    # stateful paths fail; step 2 turns them green.
+    add_executable(remotemic_voice_controller_tests tests/unit/test_voice_controller.cpp)
+    target_link_libraries(remotemic_voice_controller_tests PRIVATE remotemic_voice)
+    if(MSVC)
+        target_compile_options(remotemic_voice_controller_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_voice_controller_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_voice_controller_tests COMMAND remotemic_voice_controller_tests)
+    set_tests_properties(remotemic_voice_controller_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 3 / ADR-0013 step 1: VoiceEdgeDebouncer TDD red-state
+    # tests with a manual timer factory so no thread / sleep is used.
+    add_executable(remotemic_edge_debouncer_tests tests/unit/test_edge_debouncer.cpp)
+    target_link_libraries(remotemic_edge_debouncer_tests PRIVATE remotemic_voice)
+    if(MSVC)
+        target_compile_options(remotemic_edge_debouncer_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_edge_debouncer_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_edge_debouncer_tests COMMAND remotemic_edge_debouncer_tests)
+    set_tests_properties(remotemic_edge_debouncer_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 3 / ADR-0013 step 1: ATVV Session TDD red-state tests
+    # driving ``Session::handle_control`` / ``handle_audio`` with
+    # constructed payloads and a ManualClock so the late-audio guard
+    # never depends on real wall-clock time.
+    add_executable(remotemic_session_tests tests/unit/test_atvv_session.cpp)
+    target_link_libraries(remotemic_session_tests PRIVATE remotemic_session)
+    if(MSVC)
+        target_compile_options(remotemic_session_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_session_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_session_tests COMMAND remotemic_session_tests)
+    set_tests_properties(remotemic_session_tests PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
