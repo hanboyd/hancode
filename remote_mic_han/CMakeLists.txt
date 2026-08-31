@@ -700,6 +700,48 @@ if(REMOTEMIC_BUILD_TESTS)
             ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
         )
 
+        # Phase 4 / ADR-0014 §6 / step 5: native switch + production
+        # routing (G5). The ``audio_route_native.make_audio_route``
+        # factory must route the production call site
+        # (``RC003App._open_playback_for_new_session`` in app.py)
+        # through ``_NativeAudioRoute`` when
+        # ``REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native`` is set,
+        # and through ``EndpointPlaybackSink`` otherwise. ``shadow``
+        # is forbidden for this module per plan §3 rule 5 (real
+        # WASAPI device handle). Mirrors the Phase 3 step 5
+        # native switch + production routing gates.
+        add_test(
+            NAME remotemic_phase4_native_switch
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase4_audio_route_native_switch.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase4_native_switch PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
+        # Phase 4 / ADR-0014 §6 / step 5: production routing
+        # closeout. Source-level proof that ``app.py`` references
+        # ``make_audio_route`` and NOT the python
+        # ``audio_playback.EndpointPlaybackSink`` directly. Same
+        # regression-proof shape as ``test_phase3_production_routing.py``
+        # for the voice / edge-debouncer / atvv-session trio.
+        add_test(
+            NAME remotemic_phase4_production_routing
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase4_audio_route_production_routing.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase4_production_routing PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
         # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
         # (G5). Each runs identical scripts through both the python
         # baseline and the C++ binding (via the bridge wrappers) and

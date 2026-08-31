@@ -42,6 +42,14 @@ try:
         VoiceController,
         VoiceEdgeDebouncer,
         AtvvSession,
+        # Phase 4 / ADR-0014 step 3+5: IAudioRoute + WASAPI + PcmFormat.
+        # The bridge wrapper in ovb_rc003/audio_route_native.py
+        # (``_NativeAudioRoute.__init__``) accesses these via the
+        # public remotemic_native package; keeping them on the
+        # package surface (rather than forcing callers to reach into
+        # ``_C``) preserves the single-import-surface rule (ADR-0011).
+        PcmFormat,
+        WasapiAudioRoute,
     )
     _C_AVAILABLE = True
 except ImportError:
@@ -73,6 +81,8 @@ except ImportError:
     VoiceController = None  # type: ignore[assignment,misc]
     VoiceEdgeDebouncer = None  # type: ignore[assignment,misc]
     AtvvSession = None  # type: ignore[assignment,misc]
+    PcmFormat = None  # type: ignore[assignment,misc]
+    WasapiAudioRoute = None  # type: ignore[assignment,misc]
 
 
 # ``CounterSink`` is the C++ typedef used by ``probe_callback``'s argument
@@ -104,4 +114,6 @@ __all__ = [
     "VoiceController",
     "VoiceEdgeDebouncer",
     "AtvvSession",
+    "PcmFormat",
+    "WasapiAudioRoute",
 ]

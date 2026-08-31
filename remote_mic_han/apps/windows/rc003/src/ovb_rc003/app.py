@@ -94,6 +94,17 @@ from . import (
 from .atvv_session import AudioStarted, AudioStopped, CapsReceived, MicButtonPressed, PcmStats
 from .voice_controller_native import make_voice_controller
 from .voice_edge_debouncer_native import make_voice_edge_debouncer
+# Phase 4 / ADR-0014 §5: production routing for the audio playback
+# path. Default choice is "python" (see ``_remotemic_native_runtime``),
+# so ordinary users get the python ``EndpointPlaybackSink`` unchanged;
+# setting ``REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native`` routes the
+# real product path through the C++ ``WasapiAudioRoute`` via the
+# ``_NativeAudioRoute`` shim. ``shadow`` is intentionally not exposed
+# per plan §3 rule 5 (real WASAPI device handle is side-effecting).
+# ``audio_playback`` remains imported above for its public Python
+# types referenced by ``audio_route_native._make_audio_route_python``
+# (the fallback path).
+from .audio_route_native import make_audio_route
 
 
 class CleanupIncompleteError(RuntimeError):
@@ -166,7 +177,17 @@ class RC003App:
         # While the tap side channel is live, the keyboard Raw Input path
         # stands down so the same physical edge is not armed/dispatched twice.
         self._direct_hid_tap_active = False
-        self._playback: Optional[audio_playback.EndpointPlaybackSink] = None
+        # Type intentionally unannotated: under ``python`` the factory
+        # returns an ``EndpointPlaybackSink`` (PortAudio-backed); under
+        # ``native`` it returns ``_NativeAudioRoute`` (which holds a
+        # C++ ``WasapiAudioRoute`` on real Windows, ``FakeAudioRoute``
+        # in CI / build-time parity tests). The two share the
+        # open/write/drain/close lifecycle but ``_NativeAudioRoute``
+        # does not expose the negotiated ``output_sample_rate_hz`` /
+        # ``output_channels`` attributes the python sink sets inside
+        # ``open()``; log code at 1371-1376 uses ``getattr`` with
+        # defaults to handle both.
+        self._playback = None
         self._voice_pcm_stats = PcmStats()
 
         self._supervisor = connection_supervisor.ConnectionSupervisor(
@@ -1365,14 +1386,27 @@ class RC003App:
         try:
             endpoints = audio_output.enumerate_output_endpoints()
             audio_output.resolve_selected_endpoint(endpoints, endpoint_name, endpoint_host_api)
-            sink = audio_playback.EndpointPlaybackSink(endpoint_name, endpoint_host_api)
-            sink.open()
+            # Phase 4 / ADR-0014 §5: route through the factory so
+            # ``REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native`` actually
+            # reaches the C++ ``WasapiAudioRoute`` (single-owner on the
+            # native side per plan §3 rule 5). Default = python
+            # ``EndpointPlaybackSink`` unchanged.
+            sink = make_audio_route(endpoint_name, endpoint_host_api)
             self._playback = sink
+            # ``output_sample_rate_hz`` / ``output_channels`` are set
+            # by the python ``EndpointPlaybackSink.open()`` after
+            # PortAudio negotiation; the native shim does not
+            # expose them (it doesn't surface WASAPI mix format to
+            # Python yet - that's G6 follow-up). Log them when
+            # present so the python baseline log line stays
+            # informative without breaking the native path.
+            sample_rate = getattr(sink, "output_sample_rate_hz", "n/a")
+            channels = getattr(sink, "output_channels", "n/a")
             self._logger.info(
                 "voice playback opened: host_api=%s sample_rate=%s channels=%s",
                 endpoint_host_api or "unspecified",
-                sink.output_sample_rate_hz,
-                sink.output_channels,
+                sample_rate,
+                channels,
             )
             return True
         except audio_output.AudioOutputUnavailableError as exc:

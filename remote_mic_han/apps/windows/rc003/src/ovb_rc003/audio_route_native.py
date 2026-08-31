@@ -112,21 +112,22 @@ make_audio_route_python = _make_audio_route_python
 make_audio_route_native = _make_audio_route_native
 
 
-def make_audio_route(
-    endpoint_name: str, host_api_name: str = ""
-):
-    """Dispatch to the active implementation. Returned object exposes
-    ``open() / write(samples) / drain(timeout_s) / close()`` matching
-    the python baseline.
-    """
-    return choose_implementation(
-        "audio_route",
-        python_impl=_make_audio_route_python,
-        native_impl=_make_audio_route_native,
-        # shadow is forbidden per plan §3 rule 5 (real WASAPI
-        # device handle), so side_effect_free stays False.
-        side_effect_free=False,
-    )(endpoint_name, host_api_name)
+# Module-level binding (Phase 3 / ADR-0011 pattern): the env var is
+# captured AT IMPORT TIME so the chosen factory is fixed for the
+# lifetime of the process. Production pattern: launch
+# ``python -m ovb_rc003`` AFTER exporting the env var, exactly the
+# same as Phase 3's ``make_voice_controller`` /
+# ``make_atvv_session`` binding. Tests use ``importlib.reload`` to
+# re-capture after mutating the env var mid-process.
+make_audio_route = choose_implementation(
+    "audio_route",
+    python_impl=_make_audio_route_python,
+    native_impl=_make_audio_route_native,
+    # shadow is forbidden per plan §3 rule 5 (real WASAPI device
+    # handle), so side_effect_free stays False. ``choose_implementation``
+    # will reject any attempt to dispatch into shadow mode at runtime.
+    side_effect_free=False,
+)
 
 
 __all__ = [
