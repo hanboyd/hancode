@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T13:20:00+08:00
+- `last_updated`: 2026-08-31T15:50:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: 0545cfd
-- `current_phase`: Phase 4 step 4 complete (G3 byte-exact parity gates green: upsample parity + FakeAudioRoute vs FakePlaybackSink parity). Steps 1+2+3 already landed this session. 33/33 ctest Debug + 33/33 ctest Release. Phase 3 parity tests also fixed transitively (run_parity_test.py wrapper).
+- `git_commit_sha`: 80126cd
+- `current_phase`: Phase 4 step 5 complete (G5 native switch + production routing gates green: app.py routes through `make_audio_route`, `REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native` reaches the C++ `WasapiAudioRoute` shim). 35/35 ctest Debug + 35/35 ctest Release. Real-device validation (G6) procedure documented in `docs/testing/PHASE4-REAL-ACCEPTANCE.md`; awaiting human execution per ADR-0014 §10.
 - `hardware_available`: true
 
 ## Completed
@@ -131,10 +131,40 @@ Per ADR-0014 §6 step 4: byte-exact parity between the python baseline and the C
 - G7 production routing verifier (Phase 3): **19/19 PASS**, no regression on the audio_route entry added in step 3.
 - `python -m ovb_rc003 --dry-run`: PASS (all ovb_rc003 modules including the new audio_route_fakes + audio_route_native import successfully).
 
+## Phase 4 step 5 — native switch + production routing (2026-08-31, this session)
+
+Per ADR-0014 §6 step 5: wire the production call site through the factory so `REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native` actually reaches the C++ `WasapiAudioRoute` shim (mirrors the Phase 3 step 5 native-switch shape; closes the audio-route half of the same routing gap that `8cc0c4c` closed for voice / edge-debouncer / atvv-session).
+
+- `80126cd` step 5 (this session): native switch + production routing
+  - `apps/windows/rc003/src/ovb_rc003/audio_route_native.py` — refactored from per-call dispatch wrapper to module-level at-import-time binding (`make_audio_route = choose_implementation(...)`) matching the Phase 3 / ADR-0011 single-import-surface pattern. `shadow` is rejected at runtime per plan §3 rule 5 (real WASAPI device handle, no side-effect-free shadow owner).
+  - `apps/windows/rc003/src/ovb_rc003/app.py` — `self._playback` is now constructed via the factory; the type annotation is removed (commented inline) because under `native` it holds a `_NativeAudioRoute` shim, not the python baseline.
+  - `apps/windows/rc003/src/remotemic_native/__init__.py` — `PcmFormat` and `WasapiAudioRoute` added to public re-exports so the bridge wrapper imports them via the public package rather than reaching into `_C` (ADR-0011).
+  - `apps/windows/rc003/tests/test_phase4_audio_route_native_switch.py` (NEW): 9 tests across DefaultDispatch / NativeDispatch / RestoreAfterUnset / SingleOwner. Mirrors `test_phase3_native_switch.py` shape. Env-leak safety: snapshot+restore in `_EnvCase` (5ce9bd5 corrective pattern).
+  - `apps/windows/rc003/tests/test_phase4_audio_route_production_routing.py` (NEW): 4 source-level tests asserting `app.py` references `make_audio_route(...)` and NOT the python class directly (same regression-proof shape as the Phase 3 production routing tests).
+  - `tools/verify_phase4_native_switch.py` (NEW): 4-condition acceptance proof mirroring `verify_phase3_production_routing.py`.
+  - `docs/testing/PHASE4-REAL-ACCEPTANCE.md` (NEW): G6 manual procedure for real-device validation (RC003 + VB-Cable + Typeless / Qianwen). Maps every audio lifecycle event to a log-line + a Typeless / Qianwen behavior check, with a restore-to-default procedure and a recording template.
+  - `CMakeLists.txt`: 2 new ctest targets — `remotemic_phase4_native_switch` + `remotemic_phase4_production_routing` — wired through the same `_REMOTEMIC_PARITY_HELPER` / `_REMOTEMIC_PARITY_ENV` cluster as the Phase 3 native switch targets.
+
+### Gates after Phase 4 step 5 (this session)
+
+- `ctest -C Debug remotemic_phase4_native_switch`: **PASS** (9/9; 1 runner-only skipped locally because `_C.pyd` not built — that's the only condition).
+- `ctest -C Debug remotemic_phase4_production_routing`: **PASS** (4/4 source-level).
+- Full Debug ctest: **35/35 PASS** (was 33/33 at 0545cfd; +2 Phase 4 step 5 tests).
+- Full Release ctest: **35/35 PASS**.
+- `tools/verify_phase4_native_switch.py`: **4/4 conditions PASS**.
+- `tools/verify_phase4_audio_parity.py`: **2/2 PASS** (Phase 4 parity still byte-exact; step 5 routing changes do not regress step 4 parity).
+- G7 production routing verifier (Phase 3): **19/19 PASS**; step 5 changes do not regress Phase 3 dispatch.
+- `python -m ovb_rc003 --dry-run`: PASS (all ovb_rc003 modules import successfully after the `_NativeAudioRoute` bridge wrapper + package re-exports).
+
+### Phase 4 step 5 deferred / not yet wired
+
+- Real-device validation (G6 per `docs/testing/PHASE4-REAL-ACCEPTANCE.md`) — Typeless + RC003 + VB-Cable manual procedure. ADR-0014 §10 explicitly states G6 is Typeless + RC003 only (Qianwen Frida adapter work is structurally out of scope, see Phase 3 deferred list). The procedure is documented but not yet executed by a human operator.
+- `PcmFormat` / `WasapiAudioRoute` public re-export: built and verified in `apps/windows/rc003/src/remotemic_native/__init__.py` (rebuild staged the updated wrapper into both `build/Release` and `build/Debug`).
+
 ## Next
 
 1. On any new session: `git log --oneline -5` to find the latest Phase 4 commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
-2. Phase 4 has 2 steps remaining: step 5 (native switch + verify with real WASAPI; G6 Typeless + RC003), step 6 closeout (ADR-0014 accepted + version bump `0.4.0-candidate → 0.5.0-candidate`). Pick one per cycle, validate, commit, update CURRENT_STATUS.
+2. Phase 4 has 1 step remaining: step 6 closeout (flip ADR-0014 to `Accepted` + version bump `0.4.0-candidate → 0.5.0-candidate` + record G6 observations from `docs/testing/PHASE4-REAL-ACCEPTANCE.md` into the CHANGELOG). Pick that up after G6 is exercised on real hardware.
 3. Do not start Phase 5 (Windows input) until Phase 4 reaches step 6 closeout.
 4. Carry-forward from Phase 3: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch — all unchanged. Phase 4 real-acceptance (G6) is Typeless + RC003 only per ADR-0014 §10.
 5. Uninstall/residue check + signing only with explicit user authorization.
