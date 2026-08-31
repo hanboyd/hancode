@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T17:50:00+08:00
+- `last_updated`: 2026-08-31T19:15:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: 3a547e5
-- `current_phase`: **Phase 5 step 1 complete (interfaces + stubs + red-state tests).** ADR-0015 (proposed) + `IInputSource` / `IHostActionSink` / `ActionResolver` + `InputEvent` value type + 5 stub Win32 adapters + 2 cross-OS recording doubles + 5 ctest targets. 40/40 ctest Debug + 40/40 ctest Release (was 35/35 at `18320f7`; +5 Phase 5 step 1 tests). Zero behavior change. Phase 5 has 2 steps remaining: step 2 (real C++ implementations: Raw Input parsing / Frida HID tap reader / LL hook dispatcher / SendInput adapter, default-table ActionResolver), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
+- `git_commit_sha`: 7ffc269
+- `current_phase`: **Phase 5 step 2 sub-pass A complete (pure-logic stubs replaced).** Real `DefaultActionResolver` mirroring `key_mapping.py:104-117` (Power→Escape, Arrows→VK_UP/DOWN/LEFT/RIGHT, Ok→VK_RETURN, Back→VK_BACK, VolumeUp/Down→SystemAction, Home→ShowDesktop, Menu→ContextMenu, Tv→AppSwitch, Mic→nullopt, VolumeMute→nullopt) + real `HotkeyPhysicalizer` mirroring `hotkey.py:HotkeySpec.parse` + `win32_keys.py:VK_CODES` (chord parser with `_MODIFIER_ORDER` + `_TOKEN_ALIASES`, full VK table for named tokens / digits / letters / f-keys / numpad / `vk_XX` hex). Tap-style submit (modifiers down in canonical order, trigger, trigger up, modifiers reverse). 41/41 ctest Debug + 41/41 ctest Release (was 40/40 at `3a547e5`; +1 net from renaming the resolver test + adding hotkey test). Zero behavior change. Phase 5 has 2 steps remaining: step 2 sub-pass B (real Win32 adapters: Raw Input parsing / LL hook dispatcher / Frida HID tap reader / SendInput adapter), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
 - `hardware_available`: true
 
 ## Completed
@@ -193,7 +193,7 @@ Per ADR-0014 §6 step 6: flip status to `Accepted`, version bump per `cpp-migrat
 ## Next
 
 1. On any new session: `git log --oneline -5` to find the latest commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
-2. **Phase 5 step 1 closed.** Phase 5 has 2 steps remaining: step 2 (real C++ implementations: Raw Input parsing / Frida HID tap reader / LL hook dispatcher / SendInput adapter + default-table ActionResolver), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump `0.5.0-candidate → 0.6.0-candidate`).
+2. **Phase 5 step 2 sub-pass A closed at `7ffc269`.** Phase 5 has 2 steps remaining: step 2 sub-pass B (real Win32 adapters: Raw Input parsing / LL hook dispatcher / Frida HID tap reader / SendInput adapter — all Windows-only, so most testing will be shadow-parity until G6 real-device validation), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump `0.5.0-candidate → 0.6.0-candidate`).
 3. G6 real-device validation (RC003 + VB-Cable + Typeless) per `PHASE4-REAL-ACCEPTANCE.md` is still open as an unresolved carry-forward — when convenient, paste the recording-template table back and update the CHANGELOG `[0.5.0-candidate]` G6 row.
 4. Phase 3 carry-forward unchanged: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch.
 5. Uninstall/residue check + signing only with explicit user authorization.
@@ -225,6 +225,36 @@ Per `docs/architecture/cpp-migration-execution-plan.md` §5 阶段 5 + ADR-0015 
 
 ### Phase 5 step 1 deferred / open
 
-- All real Win32 implementations are still stubs (refuse start / reject submit / return nullopt). Production behavior is unchanged: still 100% python baseline. Step 2 lands the real C++ for Raw Input / Frida HID tap / LL hook / SendInput + default-table ActionResolver.
-- Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged by Phase 5 step 1 — actual reachability via Frida tap still pending G6 real-device validation.
+- All real Win32 implementations are still stubs (refuse start / reject submit / return nullopt). Production behavior is unchanged: still 100% python baseline. Step 2 sub-pass A lands the pure-logic replacements (real ActionResolver + real HotkeyPhysicalizer); step 2 sub-pass B lands the real Win32 adapters (Raw Input parsing / LL hook dispatcher / Frida HID tap reader / SendInput adapter).
+- Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged by Phase 5 step 2 sub-pass A — actual reachability via Frida tap still pending G6 real-device validation.
 5. Uninstall/residue check + signing only with explicit user authorization.
+
+## Phase 5 step 2 sub-pass A — real ActionResolver + real HotkeyPhysicalizer (2026-08-31, this session)
+
+Per ADR-0015 §3.5 + §4 step 2: replace the 2 pure-logic stubs (no Win32 dependency, fully testable on any platform) with real implementations. Per granularity rule, sub-pass B (real Win32 adapters) is a separate commit because each adapter is large + Windows-only and benefits from its own focused review.
+
+- `7ffc269` (this session):
+  - `include/remotemic/input/action_resolver.hpp` — adds `DefaultActionResolver` final class declaration mirroring `key_mapping.py:104-117` exactly.
+  - `src/input/action_resolver.cpp` (NEW) — real default-table impl. VK codes copied byte-identical with `win32_keys.py` so G3 byte-exact parity (step 3) stays trivially achievable. Mic→nullopt (voice hotkey path owns it). VolumeMute→nullopt (user-bindable only).
+  - `include/remotemic/input/hotkey_physicalizer.hpp` — adds `held_keys_` private member for future sub-pass B release surface.
+  - `src/input/hotkey_physicalizer.cpp` (NEW) — real chord-name parser + VK code table. Mirrors `hotkey.py:HotkeySpec.parse` (lowercase + strip whitespace + split on `+` + drop empties) + `_TOKEN_ALIASES` (left_ctrl→lctrl, right_ctrl→rctrl, left_shift→lshift, right_shift→rshift, left_alt→lalt, right_alt→ralt, left_win→lwin, right_win→rwin) + `_MODIFIER_ORDER` (12 canonical entries). Tap-style submit down sequence (modifiers in canonical order, then trigger), then up sequence (trigger first, then modifiers reverse). `release_held()` is a safety-net no-op after a successful tap (held_keys_ is empty); sub-pass B will wire the real release path when SendInputActionSink exposes a release surface.
+  - `tests/unit/test_action_resolver.cpp` (NEW) — 11 tests asserting every default-table mapping (Power/Arrows/Ok/Back/Volume/Home/Menu/Tv) + nullopt rows (Mic/VolumeMute) + pure-logic invariant (same button twice returns same result, no allocation).
+  - `tests/unit/test_hotkey_physicalizer.cpp` (NEW) — 17 tests asserting single-token HOLD mode + chord-with-modifier-and-trigger + canonical modifier order + token aliases (left_ctrl→lctrl, right_alt→rmenu) + modifier-only chord with ≥2 tokens + function-key/digit/vk_XX hex/named-token lookup + empty/nullptr/unknown-token error paths + whitespace/case lowering + release_held after successful tap (no-op) + release_held after failed tap (no-op) + sequential chords.
+  - `tests/unit/test_action_resolver_stub.cpp` (DELETED) — red-state row preserved as the step 1 commit `3a547e5` log entry.
+  - `CMakeLists.txt`: `remotemic_input` STATIC library gains `src/input/action_resolver.cpp` + `src/input/hotkey_physicalizer.cpp`, loses both `_stub.cpp` siblings. CTest target `remotemic_action_resolver_stub_tests` renamed to `remotemic_action_resolver_tests` (target name + file). New CTest target `remotemic_hotkey_physicalizer_tests` registered.
+
+### Gates after Phase 5 step 2 sub-pass A (this session)
+
+- `ctest -C Debug`: **41/41 PASS** (was 40/40 at `3a547e5`; +1 net: the renamed resolver test counts as 1, plus the new hotkey test counts as 1, while the deleted stub test counts as -1).
+- `ctest -C Release`: **41/41 PASS**.
+- `/W4` build clean — no Release-only "unused variable" warnings (the `bool ok = phys.physicalize(...)` pattern from step 1 had to be inlined as `assert(phys.physicalize(...))` to silence `/W4` C4189 in Release builds where `assert` is removed).
+- `tools/verify_phase3_production_routing.py`: **19/19 PASS** (no Phase 3 regression from new library).
+- `tools/verify_phase4_native_switch.py`: **4/4 PASS**.
+- `tools/verify_phase4_audio_parity.py`: **2/2 PASS**.
+- `python -m ovb_rc003 --dry-run`: PASS.
+
+### Phase 5 step 2 sub-pass A deferred / open
+
+- Windows-only stub adapters unchanged: `LowLevelKeyhook` / `RawInput` / `FridaHidTap` / `SendInput` still refuse `start()` / reject `submit_*` / return `nullopt` for `resolve()`. Production behavior is still 100% python baseline; sub-pass B lands the real Win32 adapters.
+- HotkeyPhysicalizer `release_held()` is currently a safety-net no-op (after a successful tap nothing is held). When sub-pass B wires the real SendInputActionSink release surface, the held_keys_ invariant moves to the sink side and `release_held()` becomes a meaningful best-effort cleanup hook.
+- Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged — actual reachability via Frida tap still pending G6 real-device validation.
