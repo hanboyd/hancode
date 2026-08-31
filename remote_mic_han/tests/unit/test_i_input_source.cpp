@@ -1,7 +1,5 @@
-// Phase 5 / ADR-0015 §8 / step 1: IInputSource + recording double red
-// state. Recording-double tests pass on day 1 (the fake already
-// records what the test injects). Windows-only stubs fail start() and
-// are asserted to fail, marking step 1 red state.
+// Phase 5 / ADR-0015 §8 / step 2 sub-pass B: IInputSource + recording
+// double + real Win32 adapter tests.
 
 #include <cassert>
 #include <cstdint>
@@ -69,18 +67,29 @@ bool test_fake_input_source_dropped_counter_settable() {
     return true;
 }
 
-bool test_windows_stubs_refuse_start_until_step_2() {
-    // Step 1 contract: the three Windows-only input sources return
-    // false from start(). Step 2 replaces each stub with a real
-    // implementation; until then, production code MUST NOT route real
-    // input through these stubs (they'll fail-closed to python).
+bool test_windows_stubs_now_real() {
+    // Step 2 sub-pass B contract: the three Windows-only input sources
+    // install real Win32 handles on start() (Windows host) and fail
+    // closed on non-Windows CI hosts (per ADR-0015 §2). Either way,
+    // stop() is idempotent and safe.
     RawInputSource ri;
     LowLevelKeyboardHook hook;
     FridaHidTapSource tap;
 
+#ifdef _WIN32
+    assert(ri.start() == true);
+    assert(hook.start() == true);
+    // FridaHidTapSource may legitimately fail-closed when no Frida
+    // Gadget is reachable on the loopback port; we do not assert on
+    // its start() return value to keep the test robust against
+    // machines without a running tap server.
+    (void)tap.start();
+#else
+    // Non-Windows CI: fail-closed per ADR-0015 §2.
     assert(ri.start() == false);
     assert(hook.start() == false);
     assert(tap.start() == false);
+#endif
 
     ri.stop();
     hook.stop();
@@ -109,8 +118,8 @@ int main() {
          &test_fake_input_source_injects_and_records},
         {"fake_input_source_dropped_counter_settable",
          &test_fake_input_source_dropped_counter_settable},
-        {"windows_stubs_refuse_start_until_step_2",
-         &test_windows_stubs_refuse_start_until_step_2},
+        {"windows_stubs_now_real",
+         &test_windows_stubs_now_real},
         {"input_source_is_polymorphic",
          &test_input_source_is_polymorphic},
     };

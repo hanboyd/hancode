@@ -224,10 +224,10 @@ add_library(remotemic_input STATIC
     src/input/fake_input_source.cpp
     src/input/fake_host_action_sink.cpp
     src/input/hotkey_physicalizer.cpp
-    src/input/low_level_keyboard_hook_stub.cpp
-    src/input/raw_input_source_stub.cpp
-    src/input/frida_hid_tap_source_stub.cpp
-    src/input/send_input_action_sink_stub.cpp
+    src/input/low_level_keyboard_hook.cpp
+    src/input/raw_input_source.cpp
+    src/input/frida_hid_tap_source.cpp
+    src/input/send_input_action_sink.cpp
 )
 
 target_include_directories(remotemic_input
