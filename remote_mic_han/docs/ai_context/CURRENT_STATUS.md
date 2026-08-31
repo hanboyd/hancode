@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T17:10:00+08:00
+- `last_updated`: 2026-08-31T17:20:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: (Phase 4 step 6 closeout pending commit)
-- `current_phase`: Phase 4 step 6 closeout in flight (ADR-0014 → accepted; version bump 0.4.0-candidate → 0.5.0-candidate; CHANGELOG `[0.5.0-candidate]` entry written with G1/G2/G3/G5 green table + G6 deferred row per ADR-0014 §10). 35/35 ctest Debug + 35/35 ctest Release after the version sync. Real-device G6 (RC003 + VB-Cable + Typeless) procedure documented in `docs/testing/PHASE4-REAL-ACCEPTANCE.md`; awaiting human execution.
+- `git_commit_sha`: 18320f7
+- `current_phase`: **Phase 4 closed.** ADR-0014 → accepted; version bumped 0.4.0-candidate → 0.5.0-candidate; CHANGELOG `[0.5.0-candidate]` entry written with G1/G2/G3/G5 green table + G6 deferred row per ADR-0014 §10. 35/35 ctest Debug + 35/35 ctest Release after version sync. G6 real-device procedure (`docs/testing/PHASE4-REAL-ACCEPTANCE.md`) awaits a human operator on real hardware. Next phase is an executive call: G6 execution OR Phase 5 (Windows input).
 - `hardware_available`: true
 
 ## Completed
