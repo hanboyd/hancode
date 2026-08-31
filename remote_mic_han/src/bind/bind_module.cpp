@@ -15,11 +15,19 @@
 #include "remotemic/adpcm/frame_accumulator.hpp"
 #include "remotemic/voice/voice_controller.hpp"
 #include "remotemic/voice/edge_debouncer.hpp"
+#include "remotemic/interfaces/audio_route.hpp"
+#include "remotemic/audio/wasapi_audio_route.hpp"
+#include "remotemic/audio/fake_audio_route.hpp"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include <variant>
 
 namespace py = pybind11;
 using namespace remotemic;
+namespace audio = remotemic::audio;
 
 PYBIND11_MODULE(_C, m) {
     m.doc() = "RemoteMic Windows native binding - private implementation "
@@ -618,4 +626,143 @@ PYBIND11_MODULE(_C, m) {
              },
              "Encode host->device MIC_CLOSE command carrying the\n"
              "negotiated protocol version + last-seen session_id.");
+
+    // ------------------------------------------------------------------
+    // 11. IAudioRoute / WasapiAudioRoute / FakeAudioRoute
+    //     (Phase 4 / ADR-0014 §3, §4). IAudioRoute is exposed as a
+    //     trampoline class with polymorphic start/write/drain/stop/close
+    //     so Python can hold either a real WASAPI route or a fake
+    //     recording double through the same surface. PcmFormat is a
+    //     small POD value type matching
+    //     apps/windows/rc003/src/ovb_rc003/audio_playback.py:SOURCE_SAMPLE_RATE_HZ.
+    //
+    //     No native compute is exposed at this seam yet: WASAPI's
+    //     single-owner rule (plan §3 rule 5) means the C++ side owns
+    //     the device handle, so Python can only drive the lifecycle
+    //     (start/write/drain/stop/close). step 4 wires FakeAudioRoute
+    //     into the shadow parity harness.
+    // ------------------------------------------------------------------
+    py::class_<PcmFormat>(m, "PcmFormat")
+        .def(py::init<>(),
+             "Construct a 16 kHz mono int16 PCM format (the BLE\n"
+             "ATVV source rate).")
+        .def(py::init<std::uint32_t, std::uint16_t, std::uint16_t>(),
+             py::arg("sample_rate"),
+             py::arg("channels"),
+             py::arg("bits_per_sample"))
+        .def_readwrite("sample_rate", &PcmFormat::sample_rate)
+        .def_readwrite("channels", &PcmFormat::channels)
+        .def_readwrite("bits_per_sample", &PcmFormat::bits_per_sample);
+
+    py::class_<IAudioRoute, std::shared_ptr<IAudioRoute>>(
+        m, "IAudioRoute")
+        .def("start",
+             [](IAudioRoute& self, const PcmFormat& fmt) {
+                 return self.start(fmt);
+             },
+             py::arg("format"),
+             "Open the underlying device for ``format``. Returns\n"
+             "True on success, False on any failure (caller must\n"
+             "fail-closed).")
+        .def("write",
+             [](IAudioRoute& self,
+                std::vector<std::int16_t> samples) {
+                 return self.write(
+                     std::span<const std::int16_t>(samples));
+             },
+             py::arg("samples"),
+             "Enqueue samples; non-blocking. Returns False if the\n"
+             "route is stopped or never started. Internally\n"
+             "drop-oldest via BoundedPcmQueue.")
+        .def("drain",
+             [](IAudioRoute& self, std::int64_t timeout_ms) {
+                 self.drain(std::chrono::milliseconds(timeout_ms));
+             },
+             py::arg("timeout_ms") = 500,
+             "Block up to timeout_ms waiting for the writer queue\n"
+             "and device buffer to drain. Never throws. After\n"
+             "drain(), write() may still succeed (queue empty,\n"
+             "writer alive); stop() ends the writer.")
+        .def("stop", &IAudioRoute::stop,
+             "Tell the writer thread to exit after the current\n"
+             "chunk. Idempotent. Does NOT release device handles;\n"
+             "call close() for that.")
+        .def("close", &IAudioRoute::close,
+             "Release device handles. Idempotent. Implies stop().\n"
+             "After close() write() must return False.");
+
+    py::class_<audio::WasapiAudioRoute, IAudioRoute,
+               std::shared_ptr<audio::WasapiAudioRoute>>(
+        m, "WasapiAudioRoute")
+        .def(py::init([](std::string endpoint_name,
+                         std::string host_api_name) {
+                 auto to_wide = [](const std::string& s) {
+                     if (s.empty()) return std::wstring{};
+                     const int needed =
+                         MultiByteToWideChar(CP_UTF8, 0, s.data(),
+                                             static_cast<int>(s.size()),
+                                             nullptr, 0);
+                     std::wstring out(static_cast<std::size_t>(needed),
+                                      L'\0');
+                     MultiByteToWideChar(
+                         CP_UTF8, 0, s.data(),
+                         static_cast<int>(s.size()), &out[0], needed);
+                     return out;
+                 };
+                 return std::make_shared<audio::WasapiAudioRoute>(
+                     to_wide(endpoint_name),
+                     to_wide(host_api_name));
+             }),
+             py::arg("endpoint_name"),
+             py::arg("host_api_name") = L"",
+             "Construct a WASAPI output route bound to\n"
+             "(endpoint_name, host_api_name). Windows-only;\n"
+             "start() returns False on non-Windows or when the\n"
+             "endpoint cannot be resolved.")
+        .def("dropped_count",
+             &audio::WasapiAudioRoute::dropped_count,
+             "Monotonic counter of samples dropped due to queue\n"
+             "overflow. Reset only at construction.")
+        .def("write_error_count",
+             &audio::WasapiAudioRoute::write_error_count,
+             "Number of WASAPI GetBuffer/ReleaseBuffer failures\n"
+             "observed by the writer jthread.")
+        .def("writer_thread_alive",
+             &audio::WasapiAudioRoute::writer_thread_alive,
+             "True if the writer jthread is currently joinable\n"
+             "(i.e. start() succeeded and close() has not run).")
+        .def("current_format",
+             &audio::WasapiAudioRoute::current_format,
+             "The PcmFormat passed to the most recent successful\n"
+             "start(); default-constructed otherwise.");
+
+    py::class_<audio::FakeAudioRoute, IAudioRoute,
+               std::shared_ptr<audio::FakeAudioRoute>>(
+        m, "FakeAudioRoute")
+        .def(py::init<>(),
+             "Construct a recording test double. Always returns\n"
+             "True from start(); writes append to an internal\n"
+             "buffer that tests can inspect.")
+        .def("recorded_samples",
+             &audio::FakeAudioRoute::recorded_samples,
+             "Number of int16 samples written since start().")
+        .def("write_call_count",
+             &audio::FakeAudioRoute::write_call_count,
+             "Monotonic counter of write() invocations.")
+        .def("started_count",
+             &audio::FakeAudioRoute::started_count,
+             "Monotonic counter of successful start() invocations.")
+        .def("stopped_count",
+             &audio::FakeAudioRoute::stopped_count,
+             "Monotonic counter of stop() invocations.")
+        .def("closed_count",
+             &audio::FakeAudioRoute::closed_count,
+             "Monotonic counter of close() invocations.")
+        .def("dropped_count",
+             &audio::FakeAudioRoute::dropped_count,
+             "Number of write() calls rejected because the route\n"
+             "was not started.")
+        .def("last_format",
+             &audio::FakeAudioRoute::last_format,
+             "The PcmFormat from the most recent start().");
 }

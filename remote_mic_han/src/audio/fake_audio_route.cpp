@@ -30,6 +30,9 @@ bool FakeAudioRoute::start(PcmFormat format) {
 }
 
 bool FakeAudioRoute::write(std::span<const std::int16_t> samples) {
+    // Count every invocation (including rejected ones) so operators
+    // can compute success rate as 1 - dropped_/write_calls_.
+    ++write_calls_;
     {
         std::lock_guard<std::mutex> lk(m_);
         if (!started_flag_) {
@@ -38,7 +41,6 @@ bool FakeAudioRoute::write(std::span<const std::int16_t> samples) {
         }
         recorded_.insert(recorded_.end(), samples.begin(), samples.end());
     }
-    ++write_calls_;
     return true;
 }
 

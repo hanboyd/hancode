@@ -614,6 +614,25 @@ if(REMOTEMIC_BUILD_TESTS)
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
 
+        # Phase 4 / ADR-0014 §6 / step 3: IAudioRoute / WasapiAudioRoute
+        # / FakeAudioRoute binding smoke (G3). Loads the bundled .pyd,
+        # exercises the IAudioRoute lifecycle through FakeAudioRoute
+        # (no real WASAPI device required), and asserts that the
+        # PcmFormat value-type round-trips correctly. Real-device
+        # validation lives in G6 (real RC003 + Typeless). On fail, do
+        # not advance step 4 (shadow parity harness).
+        add_test(
+            NAME remotemic_audio_route_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_audio_route_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_audio_route_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
+
         # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
         # (G5). Each runs identical scripts through both the python
         # baseline and the C++ binding (via the bridge wrappers) and
@@ -774,7 +793,7 @@ if(REMOTEMIC_BUILD_PYTHON)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
     )
-    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm remotemic_voice remotemic_session pybind11::pybind11)
+    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm remotemic_voice remotemic_session remotemic_audio pybind11::pybind11)
 
     # Copy the public Python wrapper next to the compiled _C.pyd so the
     # build directory is a drop-in importable package.

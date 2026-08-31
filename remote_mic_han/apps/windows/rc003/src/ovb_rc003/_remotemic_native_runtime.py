@@ -60,6 +60,10 @@ _DEFAULT_CHOICES: dict[str, ImplementationChoice] = {
     "voice_controller": "python",
     "voice_edge_debouncer": "python",
     "atvv_session": "python",
+    # Phase 4 / ADR-0014 §6: WASAPI audio route. Side-effecting (real
+    # device handle) per plan §3 rule 5, so ``shadow`` is intentionally
+    # not exposed; parity harness in step 4 uses FakeAudioRoute.
+    "audio_route": "python",
 }
 
 _ENV_PREFIX = "REMOTEMIC_NATIVE_CHOICE_"
