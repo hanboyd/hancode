@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T11:55:00+08:00
+- `last_updated`: 2026-08-31T13:20:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: b5c4d9b
-- `current_phase`: Phase 4 step 3 complete (binding seam + G3 bind smoke green). Steps 1+2 landed earlier this session (efa6684, d443d03). Phase 3 native path stable (G7 verifier 19/19, ctest 31/31 Debug + Release).
+- `git_commit_sha`: 0545cfd
+- `current_phase`: Phase 4 step 4 complete (G3 byte-exact parity gates green: upsample parity + FakeAudioRoute vs FakePlaybackSink parity). Steps 1+2+3 already landed this session. 33/33 ctest Debug + 33/33 ctest Release. Phase 3 parity tests also fixed transitively (run_parity_test.py wrapper).
 - `hardware_available`: true
 
 ## Completed
@@ -107,10 +107,34 @@ Per user direction 2026-08-31, Phase 4 entry is an executive call: the existing 
 - `_NativeAudioRoute.open()` requires a real WASAPI endpoint (`CABLE Output` etc.); CI / headless shells fail closed at `_resolve_device_index`. Step 4's `FakeAudioRoute` shadow parity harness is the build-time proof point. Real-device validation (G6) happens at step 5 or step 6.
 - WASAPI's single-owner rule (plan §3 rule 5) is honored: the C++ side owns the device handle; Python only drives the lifecycle (`start/write/drain/stop/close`). No `numpy` or Python-side audio buffer slicing crosses the binding seam yet.
 
+## Phase 4 step 4 — G3 parity harness (2026-08-31, this session)
+
+Per ADR-0014 §6 step 4: byte-exact parity between the python baseline and the C++ impl, for both Upsample16kTo48k (vs `audio_playback.py:154-172`) and the audio_route lifecycle (via the FakeAudioRoute + FakePlaybackSink recording-double pair, since real WASAPI is side-effecting per plan §3 rule 5).
+
+- `0545cfd` step 4 (this session): parity harness
+  - `bind_module.cpp` exposes `upsample_16k_to_48k` + `UpsampleState` (test-only via `_C`); `FakeAudioRoute` binding gains `recorded_samples_list` / `peak` / `rms` introspection.
+  - `include/remotemic/audio/fake_audio_route.hpp` + `src/audio/fake_audio_route.cpp`: `recorded_snapshot` (defensive copy under mutex), `peak_abs` (int32 max abs), `rms_value` (int64-accumulated sqrt, no overflow on int16 inputs).
+  - `apps/windows/rc003/tests/fakes/audio_route_fakes.py` (NEW): `FakePlaybackSink` — pure-python recording double mirroring `FakeAudioRoute` 1:1. start/write/drain/stop/close + the same five lifecycle counters + peak + rms as `@property`. Lives under tests/fakes so production code never imports it.
+  - `tests/bind/test_upsample_16k_to_48k_parity.py` (NEW): 8 tests — empty / single-sample-no-previous / single-sample-with-previous / multi-sample-with-carry / negative / int16-saturation / determinism / silence. All byte-exact against the python baseline.
+  - `apps/windows/rc003/tests/test_audio_route_native_parity.py` (NEW): 10 scenarios (single write / multiple writes / 20 ms chunk cadence / silence burst / alternating sizes / write-before-start dropped / write-after-close dropped / stop-idempotent / close-idempotent / loud signal) drive identical scripts through both recording doubles. Asserts `recorded_samples_list` byte-exact + 5 lifecycle counters parity + peak parity + RMS parity (6 dp). Plus 2 sanity tests for empty / silence.
+  - `tools/verify_phase4_audio_parity.py` (NEW): runs both parity tests as fresh subprocesses with PYTHONPATH set (build dir ahead of src, per cfebb9c fix). Mirrors the Phase 3 helper pattern; exits 0/1 with per-gate PASS/FAIL labels.
+  - `tools/run_parity_test.py` (REWRITTEN): the previous wrapper did `os.execvpe([sys.executable, "-m", "unittest"] + sys.argv[1:])` which duplicated `-m unittest` in argv (CMake already passes it). argparse rejected the duplicate; ctest happened to see exit 2 as "Passed" on the Phase 3 parity tests, masking the bug. New wrapper parses args in-process, strips the leading `-m unittest`, calls `unittest.main` programmatically with `TestLoader.discover` when discover or any of `-s/-t/-p` flags appear, and updates `sys.path` directly (not just `os.environ[PYTHONPATH]`). Fixes Phase 3 parity AND Phase 4 parity simultaneously.
+  - `CMakeLists.txt`: 2 new ctest targets (`remotemic_upsample_parity`, `remotemic_audio_route_parity`); moved `_REMOTEMIC_PARITY_HELPER` / `_REMOTEMIC_PARITY_ENV` definitions above all add_test calls (the previous ordering left them undefined when the Phase 4 step 4 add_test fired).
+
+### Gates after Phase 4 step 4 (this session)
+
+- `ctest -C Debug remotemic_upsample_parity`: **PASS** (8/8 byte-exact).
+- `ctest -C Debug remotemic_audio_route_parity`: **PASS** (3/3 with 12 scenarios).
+- Full Debug ctest: **33/33 PASS** (was 31/31 at b5c4d9b; +2 Phase 4 parity tests; Phase 3 parity tests now actually run, all green).
+- Full Release ctest: **33/33 PASS**.
+- `tools/verify_phase4_audio_parity.py`: **2/2 PASS**.
+- G7 production routing verifier (Phase 3): **19/19 PASS**, no regression on the audio_route entry added in step 3.
+- `python -m ovb_rc003 --dry-run`: PASS (all ovb_rc003 modules including the new audio_route_fakes + audio_route_native import successfully).
+
 ## Next
 
 1. On any new session: `git log --oneline -5` to find the latest Phase 4 commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
-2. Phase 4 has 3 steps remaining: step 4 (shadow parity harness with FakeAudioRoute), step 5 (native switch + verify), step 6 (closeout: ADR-0014 accepted + version bump `0.4.0-candidate → 0.5.0-candidate`). Pick one per cycle, validate, commit, update CURRENT_STATUS.
+2. Phase 4 has 2 steps remaining: step 5 (native switch + verify with real WASAPI; G6 Typeless + RC003), step 6 closeout (ADR-0014 accepted + version bump `0.4.0-candidate → 0.5.0-candidate`). Pick one per cycle, validate, commit, update CURRENT_STATUS.
 3. Do not start Phase 5 (Windows input) until Phase 4 reaches step 6 closeout.
 4. Carry-forward from Phase 3: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch — all unchanged. Phase 4 real-acceptance (G6) is Typeless + RC003 only per ADR-0014 §10.
 5. Uninstall/residue check + signing only with explicit user authorization.
