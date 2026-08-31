@@ -191,26 +191,41 @@ production routing 同时满足；G6 真机 deferred）：
 
 未跑 / 留待（Phase 5 closeout 之后下一步）：
 
-- G6（真机 + Typeless 完整链路 per `docs/testing/PHASE4-REAL-ACCEPTANCE.md`
-  + `docs/testing/PHASE3-REAL-ACCEPTANCE.md` 的 Phase 5 子集）
-  — 当前环境无 RC003 + Typeless + 软件 VB-Cable 同时具备；本次
-  会话仅完成 ADR-0015 §9 列出的"自动化 + 文档"两半门禁，真机
-  端到端观察 deferred 至下一次有硬件的会话。Back / volume+ /
-  volume- "deferred" 状态（Phase 3 / Phase 4 carry-forward）—
-  unchanged：elevated WUDFHost injection + HID-over-GATT 直接访问
-  在本 Windows host 被拒，G6 真机验证才能确认 Frida tap 路径
-  是否真正可达。
-- Qianwen Frida adapter work — 与 Phase 3 / Phase 4 同源
-  deferred：`qianwen_physicalizer.py:28` 锁定的 SHA-256 与用户
-  安装的 `QianwenIMEUiClient.exe` 不一致，需要 re-discover
-  callback RVA + re-lock SHA + Frida-session verification
-  matrix，单独 ADR。
-- Phase 5 内部的 input_event sink callback marshaling（SinkFn
-  是 C 函数指针 + void*）— 暂不绑定；bridge shim 用 `hasattr`
-  防御性 fallback；Phase 7 Application coordinator 接 sink
-  lifetime + callback marshaling。
-- Phase 7 / Phase 8 / Phase 9 — Phase 5 closeout commit 完成后，
-  按 `cpp-migration-execution-plan.md` §6-9 推进。
+按用户提交时指令，**Phase 5 不视为完全关闭**。明确列出
+**deferred** 项：
+
+1. **`IInputSource::set_event_sink` native binding** — SinkFn
+   是 C 函数指针 + void*，pybind11 不能直接 marshal Python
+   callable；bridge shim 用 `hasattr` 防御性 fallback + 在
+   python-side `_sink` 存储 callable。**Phase 5 不声称 native-side
+   event delivery wiring 已实现。** Phase 7 Application coordinator
+   接 sink lifetime + callback marshaling。
+2. **`HotkeyPhysicalizer::release_held()`** — 当前仍为 safety-net
+   no-op（成功 tap 后 held_keys_ 为空）。**Phase 5 不声称
+   release_held() 已实现；** 这是 best-effort cleanup hook，
+   Phase 7 才接 `SendInputActionSink` 的 release surface。
+3. **RC003 真机验收** — 当前环境无 RC003 + VB-Cable + Typeless
+   同时具备；bridge-side 路径已通过 G3 parity + G5 unit test 覆盖，
+   真机端到端观察 deferred 至下一次有硬件的会话。
+4. **Notepad 验收** — Notepad focus + chord input 是 Typeless step 4
+   acceptance matrix 的一部分；尚未在 native 路径上对真机跑过。
+5. **Typeless 验收** — `PARTIAL — step 4 only`（2026-08-31 观察）；
+   step 1 (no double-trigger on short press)、step 2 (5s HOLD mode)、
+   step 3 (3× rapid toggle) 仍未在 native 路径上验证。
+6. **Qianwen 验收** — `qianwen_physicalizer.py:28` 锁定的
+   SHA-256 与用户安装的 `QianwenIMEUiClient.exe` 不一致，需要
+   re-discover callback RVA + re-lock SHA + Frida-session
+   verification matrix，单独 ADR（与 Phase 3 / Phase 4 同源
+   deferred；明确 NOT in Phase 5 scope）。
+7. **Back / volume+ / volume- "deferred" 状态**（Phase 3 / 4
+   carry-forward）— unchanged：elevated WUDFHost injection +
+   HID-over-GATT 直接访问在本 Windows host 被拒，G6 真机验证才能
+   确认 Frida tap 路径是否真正可达。
+8. **Phase 7 / Phase 8 / Phase 9** — Phase 5 closeout commit
+   完成后，按 `cpp-migration-execution-plan.md` §6-9 推进。**用户
+   已保留决定权：Phase 6 开始前，必须先决定 deferred 项 1 + 2
+   （native-input 两缺口）是否必须在 Phase 5 内收掉；不自动
+   进入 Phase 6。**
 
 ADR-0015 状态：本次提交把状态从 `proposed` → `accepted`，与
 Phase 3 step 6 closeout（commit `11f58bd`）、Phase 4 step 6
@@ -222,8 +237,6 @@ deferred; version bump 0.5.0 → 0.6.0" 节奏。
 / `REMOTEMIC_NATIVE_CHOICE_HOST_ACTION_SINK=native` 显式选择才会
 调用 C++ 路径。**`shadow` 不允许**（plan §3 rule 5：Raw Input
 设备句柄 + `SendInput` dispatch 都是 side-effecting）。
-
----
 
 ---
 

@@ -333,11 +333,26 @@ Per ADR-0015 §10 step 3: native switch + production routing closeout + G6 real-
 ### Phase 5 step 3 deferred / open
 
 - G6 real-device validation (RC003 + VB-Cable + Typeless per `PHASE4-REAL-ACCEPTANCE.md` + `PHASE3-REAL-ACCEPTANCE.md` Phase 5 subset) — procedure documented, awaits a human operator. Recording template in the CHANGELOG `[0.6.0-candidate]` G6 row is intentionally blank; fill after one real run, then mark G6 `passed` (or `failed` with `app.log` excerpt, per Rule 1).
-- Carry-forward from Phase 3 / Phase 4 (unchanged by Phase 5): Typeless step 1/2/3 from `PHASE3-REAL-ACCEPTANCE.md`, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch.
+- **RC003 real-device acceptance: deferred** (no physical RC003 + VB-Cable + Typeless simultaneously available this session; bridge-side path is exercised but per-step RC003 app response matrix awaits hardware).
+- **Notepad acceptance: deferred** (Notepad focus + chord input is part of the Typeless step 4 acceptance matrix; not exercised against the native path on real hardware).
+- **Typeless acceptance: deferred (PARTIAL — step 4 only observed 2026-08-31)**; step 1 (no double-trigger on short press), step 2 (5s HOLD mode), and step 3 (3× rapid toggle) remain unverified.
+- **Qianwen acceptance: deferred (structural, NOT Phase 5 in scope)** — bridge's RAlt path is correct, but the user's installed `QianwenIMEUiClient.exe` SHA-256 does not match `qianwen_physicalizer.py:28`'s locked SHA-256; adapter fails closed at `qianwen_physicalizer.py:191-193`. Unblocking requires re-discovering the new build's callback RVA + re-locking the SHA + Frida-session verification matrix.
+- Carry-forward from Phase 3 / Phase 4 (unchanged by Phase 5): Step 6 late-audio guard, Step 7b KeyboardInterrupt.
 - Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged — actual reachability via Frida tap still pending G6 real-device validation on real RC003 hardware. Elevated WUDFHost injection + direct HID-over-GATT access remain denied by Windows.
-- `HotkeyPhysicalizer::release_held()` is still a safety-net no-op after a successful tap (held_keys_ is empty). Phase 7 will wire it to `SendInputActionSink`'s release surface.
-- `IInputSource::set_event_sink` (C function pointer + void*) is not bound at the pybind11 seam. The bridge shim falls back to python-side `_sink` storage on the native path. Phase 7 Application coordinator will own source + sink lifetime and add proper callback marshaling.
+- **`IInputSource::set_event_sink` native binding: deferred** — C function pointer + void* signature (`SinkFn`) cannot be directly marshaled by pybind11; bridge shim uses `hasattr` defensive fallback + stores the callable on the python side. **Phase 5 does NOT claim native-side event delivery wiring is implemented.** Phase 7 Application coordinator will own source + sink lifetime and add proper callback marshaling.
+- **`HotkeyPhysicalizer::release_held()`: deferred, still a no-op** (held_keys_ is empty after a successful tap). **Phase 5 does NOT claim release_held() is implemented;** it's a safety-net best-effort cleanup hook that Phase 7 will wire to `SendInputActionSink`'s release surface.
 
-## Phase 5 closed at 0.6.0-candidate
+## Phase 5 status: implementation complete; automated gates passed; real acceptance and remaining native-input gaps deferred
 
-Phase 5 (Windows input + host action sink) implementation complete; automated gates all green; real-device G6 validation deferred to next hardware-available session. Phase 6 (BLE / WinRT) is the next entry per `cpp-migration-execution-plan.md` §6.
+Phase 5 (Windows input + host action sink) implementation is complete on the C++ side (interfaces + recording doubles + pure-logic + 4 real Win32 adapters + pybind11 binding seam) and on the Python bridge side (two module-level switch factories with defensive fallbacks). Automated gates all green (43/43 ctest Debug + 43/43 ctest Release; G3 version sync `info.version == "0.6.0"`; G5 native switch 13 子测试 PASS; G5 production routing closeout 4/4 + 3/3; G7 Phase 3 / Phase 4 regressions all PASS).
+
+**Phase 5 does NOT claim any of the following are complete** (these remain deferred — explicit list per user direction at commit time):
+
+1. `IInputSource::set_event_sink` native binding (SinkFn callback marshaling at the pybind11 seam).
+2. `HotkeyPhysicalizer::release_held()` (still a no-op; release path not wired to SendInputActionSink).
+3. RC003 real-device acceptance (per `PHASE3-REAL-ACCEPTANCE.md` / `PHASE4-REAL-ACCEPTANCE.md`).
+4. Notepad acceptance (Notepad focus + chord input, part of Typeless step 4 matrix).
+5. Typeless acceptance (PARTIAL — step 4 only; steps 1/2/3 not exercised on native path).
+6. Qianwen acceptance (structural SHA-256 mismatch, NOT Phase 5 in scope).
+
+Phase 6 (BLE / WinRT) is the next entry per `cpp-migration-execution-plan.md` §6; user direction: do NOT auto-start Phase 6 before deciding whether items 1 + 2 above must be closed in Phase 5 first.
