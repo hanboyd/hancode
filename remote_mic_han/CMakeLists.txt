@@ -212,6 +212,38 @@ add_library(remotemic_audio STATIC
     src/audio/wasapi_audio_route.cpp
 )
 
+# ---------------------------------------------------------------------------
+# Phase 5 / ADR-0015 step 1: Windows input + host action sink
+# (stub). Pure C++ interfaces + recording doubles + Windows-only
+# stub implementations (refuse start()). Step 2 replaces each stub
+# with a real Win32 adapter. The recording doubles are cross-OS
+# (no <windows.h>) so tests compile on Linux/macOS CI runners.
+# ---------------------------------------------------------------------------
+add_library(remotemic_input STATIC
+    src/input/fake_input_source.cpp
+    src/input/fake_host_action_sink.cpp
+    src/input/low_level_keyboard_hook_stub.cpp
+    src/input/raw_input_source_stub.cpp
+    src/input/frida_hid_tap_source_stub.cpp
+    src/input/send_input_action_sink_stub.cpp
+    src/input/hotkey_physicalizer_stub.cpp
+)
+
+target_include_directories(remotemic_input
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(remotemic_input PUBLIC remotemic_core)
+
+target_compile_features(remotemic_input PUBLIC cxx_std_20)
+
+if(MSVC)
+    target_compile_options(remotemic_input PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_input PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 target_include_directories(remotemic_audio
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -461,6 +493,79 @@ if(REMOTEMIC_BUILD_TESTS)
     endif()
     add_test(NAME remotemic_wasapi_audio_route_tests COMMAND remotemic_wasapi_audio_route_tests)
     set_tests_properties(remotemic_wasapi_audio_route_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 5 / ADR-0015 step 1: input value-type round-trip + enum +
+    # invariants. Pure cross-OS test; compiles on Linux/macOS CI.
+    add_executable(remotemic_input_event_tests tests/unit/test_input_event.cpp)
+    target_link_libraries(remotemic_input_event_tests PRIVATE remotemic_input)
+    if(MSVC)
+        target_compile_options(remotemic_input_event_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_input_event_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_input_event_tests COMMAND remotemic_input_event_tests)
+    set_tests_properties(remotemic_input_event_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 5 / ADR-0015 step 1: IInputSource + recording double +
+    # stub red-state tests. Asserts Windows-only stubs refuse start()
+    # until step 2 lands.
+    add_executable(remotemic_i_input_source_tests tests/unit/test_i_input_source.cpp)
+    target_link_libraries(remotemic_i_input_source_tests PRIVATE remotemic_input)
+    if(MSVC)
+        target_compile_options(remotemic_i_input_source_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_i_input_source_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_i_input_source_tests COMMAND remotemic_i_input_source_tests)
+    set_tests_properties(remotemic_i_input_source_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 5 / ADR-0015 step 1: IHostActionSink + recording double +
+    # stub red-state tests.
+    add_executable(remotemic_i_host_action_sink_tests tests/unit/test_i_host_action_sink.cpp)
+    target_link_libraries(remotemic_i_host_action_sink_tests PRIVATE remotemic_input)
+    if(MSVC)
+        target_compile_options(remotemic_i_host_action_sink_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_i_host_action_sink_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_i_host_action_sink_tests COMMAND remotemic_i_host_action_sink_tests)
+    set_tests_properties(remotemic_i_host_action_sink_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 5 / ADR-0015 step 1: LowLevelKeyboardHook stub red-state
+    # tests (asserts start() returns false until step 2 lands the real
+    # WH_KEYBOARD_LL implementation).
+    add_executable(remotemic_low_level_hook_stub_tests tests/unit/test_low_level_keyboard_hook_stub.cpp)
+    target_link_libraries(remotemic_low_level_hook_stub_tests PRIVATE remotemic_input)
+    if(MSVC)
+        target_compile_options(remotemic_low_level_hook_stub_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_low_level_hook_stub_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_low_level_hook_stub_tests COMMAND remotemic_low_level_hook_stub_tests)
+    set_tests_properties(remotemic_low_level_hook_stub_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 5 / ADR-0015 step 1: ActionResolver stub red-state +
+    # default-table preview tests (default-table coverage lands with
+    # the real implementation in step 2).
+    add_executable(remotemic_action_resolver_stub_tests tests/unit/test_action_resolver_stub.cpp)
+    target_link_libraries(remotemic_action_resolver_stub_tests PRIVATE remotemic_input)
+    if(MSVC)
+        target_compile_options(remotemic_action_resolver_stub_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_action_resolver_stub_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_action_resolver_stub_tests COMMAND remotemic_action_resolver_stub_tests)
+    set_tests_properties(remotemic_action_resolver_stub_tests PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
