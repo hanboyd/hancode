@@ -1,13 +1,13 @@
 # AI Handover
 
 ```yaml
-last_updated: 2026-08-31T22:27:00+08:00
-agent: hermes-agent handing off to next agent
-provider: xiaomi-token-plan-cn handing off to next
-model: mimo-v2.5 handing off to next
-git_commit_sha: bab62b5
-current_phase: **Phase 5 step 2 sub-pass B closed** at bab62b5. Real Win32 adapters replacing 4 stubs: LowLevelKeyboardHook (WH_KEYBOARD_LL + SPSC ring + 5 us budget), RawInputSource (RIDEV_INPUTSINK + RC003 VID/PID filter + RIM_TYPEKEYBOARD/HID decoding), SendInputActionSink (bounded queue + worker thread + physical scan-code path + system action dispatch), FridaHidTapSource (loopback TCP + JSON gatt_read parser + usage ID decode). All 4 have #ifdef _WIN32 / #else fail-closed stubs. 21/21 ctest Debug + 21/21 ctest Release. /W4 clean. Zero behavior change (production still uses python baseline). Phase 5 has 1 step remaining: step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
-current_task: Phase 5 step 2 sub-pass B closed. Next is step 3 closeout: native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate (CMakeLists.txt / Python __version__ / pyproject.toml lockstep per Rule 2; Inno Setup AppVersion NOT bumped per Rule 1).
+last_updated: 2026-09-01T05:30:00+08:00
+agent: sonnet handing off to next agent
+provider: minimax handing off to next
+model: MiniMax-M3 handing off to next
+git_commit_sha: uncommitted (Phase 5 step 3 closeout on working tree; will be committed in next session per Rule "commit only when asked")
+current_phase: **Phase 5 step 3 closeout complete at working tree.** bind_module.cpp section 13 exposes InputSourceKind / InputEventKind / SystemAction / ButtonId / ResolvedActionKind enums + InputEvent / ResolvedAction POD + IInputSource / IHostActionSink trampoline interfaces + FakeInputSource / FakeHostActionSink recording doubles + ActionResolver / DefaultActionResolver + HotkeyPhysicalizer (cross-platform) + RawInputSource / LowLevelKeyboardHook / FridaHidTapSource / SendInputActionSink (#ifdef _WIN32). remotemic_native/__init__.py re-exports 14 new names (ADR-0011). Two new bridge wrappers (input_source_native.py / host_action_sink_native.py) with defensive getattr fallbacks for Linux/macOS + missing set_event_sink binding. app.py constructs self._input_source + self._host_action_sink in RC003App.__init__. Two new ctest targets (remotemic_phase5_input_native_switch 13 子测试 + remotemic_phase5_input_production_routing 3 source-level tests). tools/verify_phase5_native_switch.py 4 conditions PASS. scripts/append_bindings.py deleted. ADR-0015 flipped proposed → accepted. Version bumped 0.5.0-candidate → 0.6.0-candidate (CMakeLists.txt / Python __version__ / pyproject.toml / test_bind_smoke.py lockstep; Inno Setup AppVersion deliberately untouched per Rule 1). 43/43 ctest Debug + 43/43 ctest Release. Phase 5 closed at 0.6.0-candidate; Phase 6 (BLE / WinRT) is the next entry per cpp-migration-execution-plan.md §6.
+current_task: Phase 5 closed. Next is Phase 6 (BLE / WinRT) per cpp-migration-execution-plan.md §6. Before starting Phase 6, the user must (a) commit the working-tree changes via git, (b) optionally run a real-device G6 acceptance pass to mark the Phase 3 / Phase 4 / Phase 5 deferred rows as passed/failed per Rule 1 (do not auto-fix).
 deadline: none hard; current sprint has shipped a working snapshot
 hardware_validation:
   status: partial — Phase 3 native path verified end-to-end on real RC003 for short-press / long-press / graceful-stop; late-audio guard, KeyboardInterrupt path, Typeless/Qianwen integration not exercised
@@ -31,18 +31,21 @@ completed:
   - Phase 4 step 6 (18320f7): closeout — ADR-0014 accepted, version 0.5.0-candidate, CHANGELOG [0.5.0-candidate]; 35/35 ctest
   - Phase 5 step 1 (3a547e5): ADR-0015 (proposed) + IInputSource/IHostActionSink/ActionResolver/InputEvent contracts + 5 stubs + 2 recording doubles + 5 ctest targets; 40/40 ctest
   - Phase 5 step 2 sub-pass A (7ffc269): real DefaultActionResolver + real HotkeyPhysicalizer; 41/41 ctest
-  - Phase 5 step 2 sub-pass B (bab62b5, this session): real Win32 adapters replacing 4 stubs — LowLevelKeyboardHook (WH_KEYBOARD_LL + SPSC ring + 5 us QPC budget + message-pump thread), RawInputSource (RIDEV_INPUTSINK for usage 0x01/0x0C + RC003 VID/PID filter + RIM_TYPEKEYBOARD/HID decode + SPSC ring), SendInputActionSink (bounded queue + worker thread + user32.SendInput batch + physical scan-code modifiers + system action dispatch via SendMessage/keybd_event), FridaHidTapSource (loopback TCP socket 127.0.0.1:30684 + JSON gatt_read parser + 9-byte HID report decode + SPSC ring). All 4 have #ifdef _WIN32 / #else fail-closed non-Windows stubs. CMakeLists.txt updated. 3 test files updated (test_i_input_source: windows_stubs_now_real, test_i_host_action_sink: send_input_starts_on_windows, test_low_level_keyboard_hook_stub: inlined assert for /W4 C4189). 21/21 ctest Debug + 21/21 ctest Release; /W4 clean (only C4324 alignment padding); G7 verifier 19/19; step 4 parity 2/2; step 5 helper 4/4; --dry-run passes.
+  - Phase 5 step 2 sub-pass B (bab62b5): real Win32 adapters replacing 4 stubs — LowLevelKeyboardHook (WH_KEYBOARD_LL + SPSC ring + 5 us QPC budget + message-pump thread), RawInputSource (RIDEV_INPUTSINK for usage 0x01/0x0C + RC003 VID/PID filter + RIM_TYPEKEYBOARD/HID decode + SPSC ring), SendInputActionSink (bounded queue + worker thread + user32.SendInput batch + physical scan-code modifiers + system action dispatch via SendMessage/keybd_event), FridaHidTapSource (loopback TCP socket 127.0.0.1:30684 + JSON gatt_read parser + 9-byte HID report decode + SPSC ring). All 4 have #ifdef _WIN32 / #else fail-closed non-Windows stubs. CMakeLists.txt updated. 3 test files updated (test_i_input_source: windows_stubs_now_real, test_i_host_action_sink: send_input_starts_on_windows, test_low_level_keyboard_hook_stub: inlined assert for /W4 C4189). 21/21 ctest Debug + 21/21 ctest Release; /W4 clean (only C4324 alignment padding); G7 verifier 19/19; step 4 parity 2/2; step 5 helper 4/4; --dry-run passes.
+  - Phase 5 step 3 closeout (this session, uncommitted): bind_module.cpp section 13 (input layer binding seam) + remotemic_native/__init__.py re-exports + two Python bridge wrappers (input_source_native.py / host_action_sink_native.py) with defensive getattr fallbacks + app.py RC003App.__init__ constructs the factories + two new ctest targets (13 + 3 tests) + tools/verify_phase5_native_switch.py (4 conditions) + scripts/append_bindings.py deleted + ADR-0015 flipped proposed → accepted + version bump 0.5.0-candidate → 0.6.0-candidate (lockstep CMake / Python __version__ / pyproject.toml / test_bind_smoke.py; Inno Setup AppVersion NOT bumped per Rule 1) + CHANGELOG [0.6.0-candidate] entry with full G1/G2/G3/G5 gate table + G6 deferred row. Critical bug caught during closeout: original export_values() on InputEventKind / SystemAction would have caused m.SystemAction double-registration; export_values() removed to match existing ErrorCode / VoiceTriggerMode convention. 43/43 ctest Debug + 43/43 ctest Release; G3 version sync (info.version == "0.6.0") confirmed; G7 Phase 3 / Phase 4 regressions all green; --dry-run passes.
 tests_run:
   - command: ctest -C Debug
-    result: passed (21/21)
+    result: passed (43/43)
   - command: ctest -C Release
-    result: passed (21/21)
+    result: passed (43/43)
   - command: python tools/verify_phase3_production_routing.py
     result: passed (19/19)
   - command: python tools/verify_phase4_native_switch.py
     result: passed (4/4)
   - command: python tools/verify_phase4_audio_parity.py
     result: passed (2/2)
+  - command: python tools/verify_phase5_native_switch.py
+    result: passed (4/4)
   - command: python -m ovb_rc003 --dry-run
     result: passed (all ovb_rc003 modules imported successfully)
 known_problems:
@@ -52,18 +55,21 @@ known_problems:
   - Typeless third-party input tool has not been independently validated on native path; bridge's physicalized-VK chord delivery IS verified in Step 1/2 logs
   - Qianwen third-party input tool has not been independently validated
   - Installer uninstall/residue check + release signing need explicit user authorization
+  - IInputSource::set_event_sink (C function pointer + void*) is not bound at the pybind11 seam; bridge shim falls back to python-side _sink storage on the native path. Phase 7 Application coordinator will own source + sink lifetime and add proper callback marshaling at that seam.
+  - HotkeyPhysicalizer::release_held() is a safety-net no-op after a successful tap (held_keys_ is empty); Phase 7 will wire it to SendInputActionSink's release surface.
 do_not_change:
   - Do not produce PyInstaller / Inno / portable ZIP artifacts before Phase 8 (cpp-migration-version-policy.md Rule 1)
   - Do not bump voice_release_debounce_seconds default or its [0.050, 0.500] clamp band without a fresh ADR; the value is pinned at three layers on purpose
   - Do not flip any REMOTEMIC_NATIVE_CHOICE_* env var to native for normal users; default stays python
   - Do not auto-fix a failed real-acceptance row; stop, paste app.log excerpt + 1-line symptom
   - Do not start a C++ rewrite of working product functionality outside the phase plan
+  - Do not add export_values() to any of the input-layer enums in bind_module.cpp section 13; removing it was deliberate to avoid m.SystemAction double-registration (InputEventKind.SystemAction value + SystemAction enum type both at module scope). See CURRENT_STATUS.md "Phase 5 step 3 — closeout" section for the bug history.
 next:
-  - On any new session: git log --oneline -5 to find the latest commit SHA (bab62b5), then read CURRENT_STATUS.md and this handover before doing anything
-  - **Phase 5 step 2 sub-pass B closed.** Phase 5 has 1 step remaining: step 3 closeout (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
-  - Step 3 involves: (a) Python bridge wrappers for input_source / host_action_sink / key_suppressor modules, (b) production routing tests + native switch tests, (c) ADR-0015 flip to accepted, (d) version bump CMakeLists.txt / Python __version__ / pyproject.toml lockstep, (e) CHANGELOG [0.6.0-candidate] entry with G1/G2/G3/G5 gate table + G6 deferred row.
-  - Phase 3 deferred items (Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch) carry forward unchanged. Phase 4 G6 (RC003 + VB-Cable + Typeless) per PHASE4-REAL-ACCEPTANCE.md is still deferred.
+  - On any new session: git log --oneline -5 to find the latest commit SHA, then read CURRENT_STATUS.md and this handover before doing anything
+  - **Phase 5 closed at 0.6.0-candidate.** Phase 6 (BLE / WinRT) is the next entry per cpp-migration-execution-plan.md §6. The Phase 5 step 3 working-tree changes are uncommitted at the time of this handover; user must commit before Phase 6 starts.
+  - Phase 6 scope per cpp-migration-execution-plan.md §6: BLE transport + WinRT, mirroring Phase 3 / Phase 4 / Phase 5 shape (interfaces + stubs + red-state tests → real impls → real Win32 adapters → binding seam → native switch → production routing → closeout).
+  - Phase 3 deferred items (Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch) carry forward unchanged. Phase 4 G6 (RC003 + VB-Cable + Typeless) per PHASE4-REAL-ACCEPTANCE.md is still deferred. Phase 5 G6 same.
   - Do not re-run the full PHASE3-REAL-ACCEPTANCE.md table from scratch unless a Phase 3 source file is changed; the Step 1/2/7a PASS results are durable observations.
-  - Do not re-run Phase 5 step 1 tests unless a Phase 5 input source file changes; results are durable at 7ffc269. The step 2 sub-pass A tests (action_resolver / hotkey_physicalizer) are durable at 7ffc269. The step 2 sub-pass B test updates are durable at bab62b5.
-first_command_for_next_agent: git status --short --untracked-files=all
+  - Do not re-run Phase 5 step 1 / step 2 sub-pass A / step 2 sub-pass B tests unless a corresponding Phase 5 source file changes; results are durable.
+first_command_for_next_agent: git status --short --untracked-files=all && git log --oneline -5
 ```

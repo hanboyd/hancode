@@ -106,6 +106,23 @@ from .voice_edge_debouncer_native import make_voice_edge_debouncer
 # (the fallback path).
 from .audio_route_native import make_audio_route
 
+# Phase 5 / ADR-0015 §6: production routing for the input source +
+# host action sink. Default choice is "python" (see
+# ``_remotemic_native_runtime``), so ordinary users keep the python
+# ``raw_input_windows.RawInputButtonListener`` + ``win32_input``
+# unchanged; setting ``REMOTEMIC_NATIVE_CHOICE_INPUT_SOURCE=native``
+# / ``REMOTEMIC_NATIVE_CHOICE_HOST_ACTION_SINK=native`` routes the
+# real product path through the C++ ``RawInputSource`` +
+# ``SendInputActionSink`` via the ``_NativeInputSource`` /
+# ``_NativeHostActionSink`` shims. ``shadow`` is intentionally not
+# exposed per plan §3 rule 5 (Raw Input device handle +
+# ``SendInput`` dispatch are both side-effecting). The python side
+# continues to own the device-path enumeration today (see
+# ``raw_input_windows.enumerate_matching_device_paths``); the C++
+# side enumerates the same RC003 VID/PID filter per ADR-0015 §3.7.
+from .input_source_native import make_input_source
+from .host_action_sink_native import make_host_action_sink
+
 
 class CleanupIncompleteError(RuntimeError):
     """Raised by ``RC003App._cleanup_once()`` when the Raw Input listener
@@ -177,6 +194,20 @@ class RC003App:
         # While the tap side channel is live, the keyboard Raw Input path
         # stands down so the same physical edge is not armed/dispatched twice.
         self._direct_hid_tap_active = False
+        # Phase 5 / ADR-0015 §6: production routing for the input source
+        # + host action sink. Constructed via ``make_input_source`` /
+        # ``make_host_action_sink`` so the env-var switch
+        # (``REMOTEMIC_NATIVE_CHOICE_INPUT_SOURCE`` /
+        # ``REMOTEMIC_NATIVE_CHOICE_HOST_ACTION_SINK``) actually
+        # reaches the C++ side. Default stays ``python`` (per plan
+        # §1 rule 4); ordinary users keep the existing
+        # ``raw_input_windows.RawInputButtonListener`` + ``win32_input``
+        # paths unchanged. The factory objects are kept on the App
+        # instance so the env var is captured at import time and
+        # applied for the lifetime of the bridge process (Phase 3 /
+        # ADR-0011 single-import-surface pattern).
+        self._input_source = make_input_source()
+        self._host_action_sink = make_host_action_sink()
         # Type intentionally unannotated: under ``python`` the factory
         # returns an ``EndpointPlaybackSink`` (PortAudio-backed); under
         # ``native`` it returns ``_NativeAudioRoute`` (which holds a

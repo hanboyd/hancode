@@ -2,11 +2,228 @@
 
 ## [Unreleased]
 
-### Phase 5 / Phase 6（C++ 迁移）
+### Phase 6（C++ 迁移）+ Phase 7/8/9
 
-（待开始。范围：Phase 5 Windows 输入、Phase 6 BLE。
-Phase 4 已在 `0.5.0-candidate` 完成自动化门禁；真机 / Typeless /
-Qianwen 验收 deferred；本节保留作下一阶段入口。）
+（待开始。范围：Phase 6 BLE / WinRT、Phase 7 Application
+coordinator、Phase 8 PyInstaller / Inno Setup / portable ZIP /
+签名发布、Phase 9 UI 决策。Phase 5 已在 `0.6.0-candidate`
+完成自动化门禁；真机 / Typeless / Qianwen 验收 deferred；本节
+保留作下一阶段入口。）
+
+---
+
+## [0.6.0-candidate] — 2026-09-01 — Phase 5 implementation complete (automated gates passed; real RC003 / Typeless / Qianwen acceptance deferred per ADR-0015 §9)
+
+**阶段状态：implementation complete；automated gates passed；real
+RC003 / Typeless / Qianwen acceptance deferred。** Phase 5 不视为
+完全关闭，直至真机 + Typeless + Qianwen 至少各跑过一次并观察
+（Qianwen Frida adapter work 与 Phase 3 / Phase 4 同源 deferred，
+SHA-256 mismatch 仍待解）。
+
+**版本号说明**：按 `memory/cpp-migration-version-policy.md` Rule 2
+预先 bump `0.5.0-candidate → 0.6.0-candidate`，同步
+`CMakeLists.txt` 的 `project(VERSION ...)`、
+`apps/windows/rc003/src/ovb_rc003/__init__.py` 的 `__version__`、
+`apps/windows/rc003/pyproject.toml` 的 `version`、
+`tests/bind/test_bind_smoke.py` 的 `info.version`。
+`installer/RemoteMicRC003Setup.iss` 的 `AppVersion` 故意不动
+（per Rule 1 — packaging 留给 phase 8）。即使真机验收 deferred，
+版本号不回退，因为它跟踪的是 implementation+test 状态；后续若
+真机验收发现 regression，按既定策略处理：先修复 + 复测，再按
+`memory/cpp-migration-version-policy.md` Rule 1/2 决定是否需要
+patch bump，而不是预先设定。
+
+**范围**：9 阶段路线图第 5 阶段（C++/CPython 迁移第 7 区：
+Windows Raw Input + 低级键盘钩子 + Frida HID tap + SendInput
+动作发送 + Hotkey 物理化 + ActionResolver）。
+
+**状态对象 shipping 路径已接入工厂**（产品路径现在通过
+`make_input_source()` / `make_host_action_sink()` 工厂 dispatch，
+对应 `app.py` `RC003App.__init__` 的 `self._input_source` /
+`self._host_action_sink` 构造点；默认 `python`，所以普通用户的
+体验与 Phase 4 完全一致；设置
+`REMOTEMIC_NATIVE_CHOICE_INPUT_SOURCE=native` /
+`REMOTEMIC_NATIVE_CHOICE_HOST_ACTION_SINK=native` 时真实产品路径
+得到 `_NativeInputSource` / `_NativeHostActionSink` 桥接包装
+（单 owner；`shadow` 禁止，per plan §3 rule 5 — Raw Input 设备
+句柄 + `SendInput` 都是 side-effecting）。
+Phase 5 真实路由改动的门禁见下表 G5 行）。
+
+详见 [ADR-0015](../../docs/decisions/ADR-0015-phase5-windows-input-cpp.md)
+第 1-10 节 + Phase 5 step 1-3 commits。
+
+### Phase 5 / Area — Raw Input + LL Hook + Frida HID Tap + SendInput + HotkeyPhysicalizer + ActionResolver（C++ 迁移）
+
+完成 Phase 5（ADR-0015）：把 Python 基线
+`ovb_rc003.raw_input_windows` + `legacy_key_suppressor_windows` +
+`win32_input` + `frida_hid_tap_*` + `hotkey` + `key_mapping` 的
+"按键采集 + 低级钩子抑制 + 动作发送 + 热键物理化"职责迁移到
+C++：
+
+- `remotemic::input::IInputSource` + `IHostActionSink` — 抽象接口
+  + `std::shared_ptr` trampoline；`SinkFn = void(*)(InputEvent,
+  void*)` + `submit_*` 不抛异常的契约边界。
+- `remotemic::input::InputEvent` POD — `SourceKind` (RawInputKeyboard /
+  RawInputHid / FridaHidTap / LowLevelHook / Synthetic) +
+  `EventKind` (KeyDown / KeyUp / KeyCancel / SystemAction) +
+  `SystemAction` (VolumeUp / VolumeDown / ... / CodexOpen) +
+  vk_code / scan_code / usage_id / extra_info / injected / extended。
+- `remotemic::input::ActionResolver` + `DefaultActionResolver` —
+  按 `key_mapping.py:104-117` 默认表**逐字节对齐**（G3 byte-exact
+  parity）；`ButtonId::Mic` 返回 nullopt（voice hotkey path 拥有），
+  `ButtonId::VolumeMute` 返回 nullopt（user-bindable only）。
+- `remotemic::input::HotkeyPhysicalizer` — `physicalize(tokens)` 把
+  命名热键 (`"ralt"` / `"lctrl+lalt"`) 解析成 VK 序列经
+  `IHostActionSink` 提交；`release_held()` 是 Phase 7 will-wire
+  收尾 no-op。
+- `remotemic::input::RawInputSource` — Windows-only `RIDEV_INPUTSINK`
+  + RC003 VID/PID `0x2717/0x32B8` filter + `RIM_TYPEKEYBOARD` /
+  `RIM_TYPEHID` 解码 + SPSC ring buffer 256（drop-oldest）。
+- `remotemic::input::LowLevelKeyboardHook` — Windows-only
+  `WH_KEYBOARD_LL` + 隐藏 message-only HWND + dedicated pump thread
+  + SPSC ring + QPC 5 µs 预算 + `slow_callback_count_` 诊断。
+- `remotemic::input::FridaHidTapSource` — Windows-only loopback TCP
+  socket `127.0.0.1:30684`（`REMOTE_MIC_RC003_HID_TAP_PORT` 可配）
+  + IO 线程 + 新行分隔 JSON `gatt_read` 解析 + 9-byte HID 报告
+  解码。
+- `remotemic::input::SendInputActionSink` — Windows-only bounded
+  key queue 256（drop-oldest）+ worker thread + `user32.SendInput`
+  批 + 物理 scan-code modifiers（保留 left/right identity per
+  `win32_input.py:_PHYSICAL_SCAN_CODES`）+ system action 直派
+  （`SendMessage(HWND_BROADCAST, WM_APPCOMMAND, ...)` / `keybd_event`
+  / 等）。
+- `remotemic::input::FakeInputSource` + `FakeHostActionSink` —
+  跨 OS 测试 recording doubles（G3 byte-exact parity 目标）。
+- `src/bind/bind_module.cpp` section 13 — 新增绑定
+  `InputSourceKind` / `InputEventKind` / `SystemAction` / `ButtonId`
+  / `ResolvedActionKind` enums + `InputEvent` / `ResolvedAction`
+  POD + `IInputSource` / `IHostActionSink` 接口 + `FakeInputSource`
+  / `FakeHostActionSink` recording doubles + `ActionResolver` /
+  `DefaultActionResolver` + `HotkeyPhysicalizer`；`#ifdef _WIN32`
+  内暴露 `RawInputSource` / `LowLevelKeyboardHook` /
+  `FridaHidTapSource` / `SendInputActionSink`。**注意**：
+  `export_values()` 故意省略以避免 `m.SystemAction` 双重定义
+  （同 Scope 的 `InputEventKind.SystemAction` 值与 `SystemAction`
+  type）。`set_event_sink` 因 SinkFn 是 C 函数指针 + void* 暂不
+  绑定，bridge wrapper 用 `hasattr` 防御性 fallback；Phase 7
+  Application coordinator 会接 sink lifetime + callback marshaling。
+- `apps/windows/rc003/src/ovb_rc003/input_source_native.py` (NEW)
+  — `make_input_source(device_path)` 工厂 + `_PythonInputSource`
+  + `_NativeInputSource` 桥接 shim（薄包装
+  `ovb_rc003.raw_input_windows.RawInputButtonListener` 或
+  `remotemic_native.RawInputSource`）；`shadow` 禁止 per plan
+  §3 rule 5。
+- `apps/windows/rc003/src/ovb_rc003/host_action_sink_native.py`
+  (NEW) — `make_host_action_sink()` 工厂 + `_PythonHostActionSink`
+  + `_NativeHostActionSink` 桥接 shim（薄包装
+  `ovb_rc003.win32_input` 或 `remotemic_native.SendInputActionSink`）；
+  `shadow` 禁止 per plan §3 rule 5。
+- `apps/windows/rc003/src/ovb_rc003/app.py` — 导入
+  `make_input_source` / `make_host_action_sink` + 在
+  `RC003App.__init__` 构造 `self._input_source` /
+  `self._host_action_sink`（env var 在导入时 capture，per Phase 3
+  / ADR-0011 single-import-surface pattern）。
+- `apps/windows/rc003/src/remotemic_native/__init__.py` — 新增
+  `InputSourceKind` / `InputEventKind` / `SystemAction` / `ButtonId`
+  / `ResolvedActionKind` / `InputEvent` / `ResolvedAction` /
+  `IInputSource` / `FakeInputSource` / `IHostActionSink` /
+  `FakeHostActionSink` / `ActionResolver` / `DefaultActionResolver`
+  / `HotkeyPhysicalizer` 公开 re-export（ADR-0011 single-import-
+  surface）。Windows-only 类（`RawInputSource` 等）在
+  `remotemic_native._C` 上仍可访问，但不通过包 surface
+  re-export（与 Phase 4 `WasapiAudioRoute` 显式 re-export 不同的
+  选择；input layer 的 Win32 适配器数量较多且全部 fail-closed
+  on non-Windows，让 bridge shim 直接走 `getattr`）。
+- `apps/windows/rc003/tests/test_phase5_input_native_switch.py`
+  (NEW) — 13 个 native switch 测试覆盖
+  `input_source_native` + `host_action_sink_native`（Default
+  Dispatch / Native Dispatch / Reload After Unset / Fresh
+  Instance / Shadow Rejected）。env-leak safety via
+  snapshot+restore `_NativeSwitchBase`。
+- `apps/windows/rc003/tests/test_phase5_input_production_routing.py`
+  (NEW) — 3 个 source-level 测试：asserts `app.py` imports the
+  factory modules + `RC003App.__init__` constructs both factories
+  + no direct `RawInputSource()` / `SendInputActionSink()`
+  instantiation outside the bridge shim。
+- `tools/verify_phase5_native_switch.py` (NEW) — 4-condition
+  acceptance proof 镜像 `verify_phase4_native_switch.py`。
+- `CMakeLists.txt` — `remotemic_input` 库（5 个 .cpp：2 个
+  recording doubles + 3 个 Windows-only adapters）加入
+  `remotemic_native_c` 的 link list；2 个新 ctest 目标
+  `remotemic_phase5_input_native_switch` +
+  `remotemic_phase5_input_production_routing`。
+- 删除：`scripts/append_bindings.py`（一次性 WIP 辅助，已被
+  bind_module.cpp section 13 取代）。
+
+钩子回调路径非阻塞约束（ADR-0015 §3 rule 6）：所有 4 个 Win32
+adapter 的 hook callback / message pump / IO thread 都只更新原子
+状态 + 无阻塞入队 SPSC ring；绝不调 `SendInput` / `GetMessage` /
+`WriteFile` / Frida IPC / Python GIL / `std::mutex`。
+
+单 owner 约束（ADR-0015 §3 rule 5）：Raw Input / Frida HID tap /
+LL hook 三选一在跑；同时跑 `shadow` 双 owner **不允许** — Raw
+Input 句柄与 `SendInput` dispatch 都是 side-effecting。
+
+门禁（ADR-0015 §9，Debug + Release + binding + native switch +
+production routing 同时满足；G6 真机 deferred）：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| G1 (C++) | `ctest -C Debug   -R '^(remotemic_i_input_source_tests\|remotemic_i_host_action_sink_tests\|remotemic_input_event_tests\|remotemic_action_resolver_tests\|remotemic_hotkey_physicalizer_tests)\$'` | 5/5 通过 |
+| G1 (C++) | `ctest -C Release -R '^(remotemic_i_input_source_tests\|remotemic_i_host_action_sink_tests\|remotemic_input_event_tests\|remotemic_action_resolver_tests\|remotemic_hotkey_physicalizer_tests)\$'` | 5/5 通过 |
+| G2 (Phase 2-4 全部不退化) | `ctest -C Debug   -R '^(remotemic_unit_tests\|remotemic_atvv_tests\|remotemic_atvv_control_tests\|remotemic_adpcm_ima_tests\|remotemic_adpcm_dc_tests\|remotemic_adpcm_postprocess_tests\|remotemic_adpcm_frame_tests\|remotemic_voice_controller_tests\|remotemic_edge_debouncer_tests\|remotemic_session_tests\|remotemic_bounded_pcm_queue_tests\|remotemic_pcm_chunker_tests\|remotemic_upsample_tests\|remotemic_fake_audio_route_tests\|remotemic_wasapi_audio_route_tests)\$'` | 14/14 通过 |
+| G2 (Phase 2-4 全部不退化) | `ctest -C Release -R '^(...same...)\$'` | 14/14 通过 |
+| G3 (binding smoke, Phase 1-4) | `ctest -C Debug   -R '^(remotemic_bind_smoke\|remotemic_atvv_bind_smoke\|remotemic_atvv_control_bind_smoke\|remotemic_adpcm_ima_bind_smoke\|remotemic_adpcm_dc_bind_smoke\|remotemic_adpcm_postprocess_bind_smoke\|remotemic_adpcm_frame_bind_smoke\|remotemic_voice_controller_bind_smoke\|remotemic_voice_edge_debouncer_bind_smoke\|remotemic_atvv_session_bind_smoke\|remotemic_audio_route_bind_smoke)\$'` | 11/11 通过 |
+| G3 (binding smoke, Phase 1-4) | `ctest -C Release -R '^(...same...)\$'` | 11/11 通过 |
+| G3 (version sync) | `ctest -C Debug   -R '^remotemic_bind_smoke\$'` | 1/1 通过（`info.version == "0.6.0"`） |
+| G3 (version sync) | `ctest -C Release -R '^remotemic_bind_smoke\$'` | 1/1 通过 |
+| G5 (native switch) | `ctest -C Debug   -R '^remotemic_phase5_input_native_switch\$'` | 1/1 通过（13 子测试：input_source 6 + host_action_sink 7） |
+| G5 (native switch) | `ctest -C Release -R '^remotemic_phase5_input_native_switch\$'` | 1/1 通过 |
+| G5 (production routing closeout) | `python tools/verify_phase5_native_switch.py` | 4/4 条件全部 PASS（默认 = python / 单 env → native shim / shadow rejected / app references factories） |
+| G5 (production routing closeout) | `ctest -C Debug   -R '^remotemic_phase5_input_production_routing\$'` | 3/3 通过 |
+| G7 (Phase 3 production routing regression) | `ctest -C Debug   -R '^remotemic_phase3_production_routing\$'` | 17/17 通过（input_source/host_action_sink entries 不影响 voice/edge_debouncer/atvv_session/audio_route） |
+| G7 (Phase 3 production routing regression) | `python tools/verify_phase3_production_routing.py` | 19/19 PASS |
+| G7 (Phase 4 native switch regression) | `ctest -C Debug   -R '^(remotemic_phase4_native_switch\|remotemic_phase4_production_routing)\$'` | 2/2 通过 |
+| G7 (Phase 4 native switch regression) | `python tools/verify_phase4_native_switch.py` | 4/4 PASS |
+| G7 (Phase 4 parity regression) | `python tools/verify_phase4_audio_parity.py` | 2/2 PASS |
+| 总计 | `ctest -C Debug` | 43/43 通过 |
+| 总计 | `ctest -C Release` | 43/43 通过 |
+
+未跑 / 留待（Phase 5 closeout 之后下一步）：
+
+- G6（真机 + Typeless 完整链路 per `docs/testing/PHASE4-REAL-ACCEPTANCE.md`
+  + `docs/testing/PHASE3-REAL-ACCEPTANCE.md` 的 Phase 5 子集）
+  — 当前环境无 RC003 + Typeless + 软件 VB-Cable 同时具备；本次
+  会话仅完成 ADR-0015 §9 列出的"自动化 + 文档"两半门禁，真机
+  端到端观察 deferred 至下一次有硬件的会话。Back / volume+ /
+  volume- "deferred" 状态（Phase 3 / Phase 4 carry-forward）—
+  unchanged：elevated WUDFHost injection + HID-over-GATT 直接访问
+  在本 Windows host 被拒，G6 真机验证才能确认 Frida tap 路径
+  是否真正可达。
+- Qianwen Frida adapter work — 与 Phase 3 / Phase 4 同源
+  deferred：`qianwen_physicalizer.py:28` 锁定的 SHA-256 与用户
+  安装的 `QianwenIMEUiClient.exe` 不一致，需要 re-discover
+  callback RVA + re-lock SHA + Frida-session verification
+  matrix，单独 ADR。
+- Phase 5 内部的 input_event sink callback marshaling（SinkFn
+  是 C 函数指针 + void*）— 暂不绑定；bridge shim 用 `hasattr`
+  防御性 fallback；Phase 7 Application coordinator 接 sink
+  lifetime + callback marshaling。
+- Phase 7 / Phase 8 / Phase 9 — Phase 5 closeout commit 完成后，
+  按 `cpp-migration-execution-plan.md` §6-9 推进。
+
+ADR-0015 状态：本次提交把状态从 `proposed` → `accepted`，与
+Phase 3 step 6 closeout（commit `11f58bd`）、Phase 4 step 6
+closeout（commit `18320f7`）相同的"All G1/G2/G3/G5 green; G6
+deferred; version bump 0.5.0 → 0.6.0" 节奏。
+
+行为变化：**无**。默认实现仍是 Python（`raw_input_windows` +
+`win32_input`）；只有 `REMOTEMIC_NATIVE_CHOICE_INPUT_SOURCE=native`
+/ `REMOTEMIC_NATIVE_CHOICE_HOST_ACTION_SINK=native` 显式选择才会
+调用 C++ 路径。**`shadow` 不允许**（plan §3 rule 5：Raw Input
+设备句柄 + `SendInput` dispatch 都是 side-effecting）。
+
+---
 
 ---
 

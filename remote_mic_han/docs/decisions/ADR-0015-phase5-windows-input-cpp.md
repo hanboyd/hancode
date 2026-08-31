@@ -1,7 +1,8 @@
 # ADR-0015: Phase 5 — Windows Input + Host Action Sink C++ 迁移边界
 
-- Status: **proposed**
+- Status: **accepted**
 - Date: 2026-08-31
+- Closed: 2026-09-01 (Phase 5 step 3 closeout, version bump `0.5.0-candidate → 0.6.0-candidate`)
 - Phase: 5 (of 9, per `docs/architecture/cpp-migration-execution-plan.md`)
 - Related: [ADR-0011](ADR-0011-cpp-python-binding-and-error-model.md)（Python/C++ 绑定与错误模型）、[ADR-0014](ADR-0014-phase4-audio-wasapi-cpp.md)（Phase 4 WASAPI AudioRoute；本 ADR 沿用 `IAudioRoute` 的"原子状态 + 无阻塞入队"原则）
 

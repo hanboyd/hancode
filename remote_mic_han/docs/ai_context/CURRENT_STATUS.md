@@ -291,3 +291,53 @@ Per ADR-0015 §3.4 / §3.6 / §3.7 + §10 step 2: replace the 4 remaining Window
 - HotkeyPhysicalizer `release_held()` is still a safety-net no-op; step 3 or Phase 7 will wire it to `SendInputActionSink`'s release surface.
 - Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged — actual reachability via Frida tap still pending G6 real-device validation on real RC003 hardware.
 - Real-device G6 validation (RC003 + VB-Cable + Typeless per `PHASE4-REAL-ACCEPTANCE.md`) is still open as a carry-forward from Phase 4.
+
+## Phase 5 step 3 — closeout (2026-09-01, this session)
+
+Per ADR-0015 §10 step 3: native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump `0.5.0-candidate → 0.6.0-candidate`. Same shape as Phase 3 step 6 (`11f58bd`) and Phase 4 step 6 (`18320f7`) closeouts.
+
+- **Input bindings exposed**: `src/bind/bind_module.cpp` section 13 — `InputSourceKind` / `InputEventKind` / `SystemAction` / `ButtonId` / `ResolvedActionKind` enums + `InputEvent` / `ResolvedAction` POD + `IInputSource` / `IHostActionSink` trampoline interfaces + `FakeInputSource` / `FakeHostActionSink` recording doubles (cross-platform) + `ActionResolver` / `DefaultActionResolver` + `HotkeyPhysicalizer`. Windows-only `RawInputSource` / `LowLevelKeyboardHook` / `FridaHidTapSource` / `SendInputActionSink` registered behind `#ifdef _WIN32`. **Critical bug caught**: original `export_values()` calls would have caused `m.SystemAction` double-registration (`InputEventKind.SystemAction` value + `SystemAction` enum type both at module scope); removed `export_values()` to match the existing `ErrorCode` / `VoiceTriggerMode` convention.
+- **`set_event_sink` deferred**: `IInputSource::set_event_sink` takes `void(*)(InputEvent, void*)` (a C function pointer + opaque user_data) which pybind11 cannot directly marshal from a Python callable. The bridge shim uses `hasattr(self._impl, "set_event_sink")` defensive fallback; Phase 7 Application coordinator will own source + sink lifetime and add proper callback marshaling at that seam.
+- **`remotemic_native/__init__.py` re-exports** (ADR-0011 single-import-surface): 14 new names re-exported (5 enums + 2 PODs + 2 interfaces + 2 recording doubles + `ActionResolver` + `DefaultActionResolver` + `HotkeyPhysicalizer`). Windows-only Win32 classes stay on `_C` directly (not re-exported via the package surface — bridge shim uses `getattr(_rn, "RawInputSource", None)` for fall-through).
+- **Python bridge wrappers** (mirrors Phase 3 / Phase 4 native switch shape):
+  - `apps/windows/rc003/src/ovb_rc003/input_source_native.py` (NEW) — `make_input_source(device_path)` factory + `_PythonInputSource` (thin shim over `raw_input_windows.RawInputButtonListener`) + `_NativeInputSource` (thin shim over `remotemic_native.RawInputSource` or `_C` direct). Default `python` per plan §1 rule 4. `shadow` rejected at import-time per plan §3 rule 5.
+  - `apps/windows/rc003/src/ovb_rc003/host_action_sink_native.py` (NEW) — `make_host_action_sink()` factory + `_PythonHostActionSink` (thin shim over `win32_input`) + `_NativeHostActionSink` (thin shim over `remotemic_native.SendInputActionSink` or `_C` direct). Same `python` default + `shadow` rejected pattern.
+  - Both shims use defensive `getattr(_impl, "set_event_sink", None)` / `getattr(_rn, "RawInputSource", None)` patterns so they work transparently on Linux/macOS builds where the Win32 adapters are not bound.
+- **Production routing wired**: `apps/windows/rc003/src/ovb_rc003/app.py` imports `make_input_source` + `make_host_action_sink` and constructs them in `RC003App.__init__`. Env var captured at import time per Phase 3 / ADR-0011 single-import-surface pattern. Default stays `python`; ordinary users see no behavior change.
+- **Tests added** (cross-OS via Python-only recording doubles + source-level AST checks):
+  - `apps/windows/rc003/tests/test_phase5_input_native_switch.py` (NEW) — 13 tests: input_source 6 (default python / native shim reachable / python shim reachable / reload to python / fresh instance / shadow rejected) + host_action_sink 7 (default python / native shim reachable / python shim reachable / submit_key increments / reload to python / fresh instance / shadow rejected). Env-leak safety via snapshot+restore `_NativeSwitchBase` (5ce9bd5 corrective pattern).
+  - `apps/windows/rc003/tests/test_phase5_input_production_routing.py` (NEW) — 3 source-level tests: assert `app.py` imports the factory modules + `RC003App.__init__` constructs both factories + no direct `RawInputSource()` / `SendInputActionSink()` instantiation outside the bridge shim.
+  - `tools/verify_phase5_native_switch.py` (NEW) — 4-condition acceptance proof mirroring `verify_phase4_native_switch.py`.
+- **CMakeLists.txt**: `remotemic_input` library (already wired at step 1) gains the 2 new ctest targets `remotemic_phase5_input_native_switch` + `remotemic_phase5_input_production_routing` wired through the same `_REMOTEMIC_PARITY_HELPER` / `_REMOTEMIC_PARITY_ENV` cluster.
+- **Cleanup**: `scripts/append_bindings.py` (one-shot WIP helper, never finished — superseded by the real bindings in `bind_module.cpp` section 13) deleted.
+- **ADR-0015** flipped `proposed → accepted` with `Closed: 2026-09-01 (Phase 5 step 3 closeout, version bump 0.5.0-candidate → 0.6.0-candidate)`.
+- **Version bump 0.5.0-candidate → 0.6.0-candidate (lockstep per `cpp-migration-version-policy.md` Rule 2)**:
+  - `CMakeLists.txt`: `project(RemoteMicWindows VERSION 0.5.0)` → `0.6.0`
+  - `apps/windows/rc003/src/ovb_rc003/__init__.py`: `__version__ = "0.5.0-candidate"` → `"0.6.0-candidate"`
+  - `apps/windows/rc003/pyproject.toml`: `version = "0.5.0"` → `"0.6.0"`
+  - `tests/bind/test_bind_smoke.py`: `info.version == "0.5.0"` → `"0.6.0"` (G3 build-time sync assertion)
+  - `installer/RemoteMicRC003Setup.iss` deliberately NOT bumped (Rule 1 — packaging stays phase 8).
+- **CHANGELOG.md [0.6.0-candidate] entry**: full gate table mirroring the `[0.5.0-candidate]` shape (G1 C++ 5/5, G2 Phase 2-4 14/14, G3 binding 11/11, G3 version sync `info.version == "0.6.0"`, G5 native switch 13 子测试, G5 production routing closeout 4/4 + 3/3, G7 Phase 3 / Phase 4 regressions all green). G6 row carrying deferred status.
+- **Unreleased section updated** to point at Phase 6 (BLE / WinRT) + Phase 7/8/9.
+
+### Gates after Phase 5 step 3 (this session)
+
+- `ctest -C Debug`: **43/43 PASS** (was 21/21 at `bab62b5`; +22 net: 14 G2 Phase 2-4 regression tests + 11 G3 binding smoke + 1 G3 version sync + 1 G5 native switch + 3 G5 production routing closeout, — already-counted tests round-trip).
+- `ctest -C Release`: **43/43 PASS**.
+- `tools/verify_phase5_native_switch.py`: **4/4 conditions PASS** (default python / native shim reachable / shadow rejected / app references factories).
+- `tools/verify_phase3_production_routing.py` (G7 regression): **19/19 PASS**.
+- `tools/verify_phase4_native_switch.py` (G7 regression): **4/4 PASS**.
+- `tools/verify_phase4_audio_parity.py` (G7 regression): **2/2 PASS**.
+- `python -m ovb_rc003 --dry-run`: PASS.
+
+### Phase 5 step 3 deferred / open
+
+- G6 real-device validation (RC003 + VB-Cable + Typeless per `PHASE4-REAL-ACCEPTANCE.md` + `PHASE3-REAL-ACCEPTANCE.md` Phase 5 subset) — procedure documented, awaits a human operator. Recording template in the CHANGELOG `[0.6.0-candidate]` G6 row is intentionally blank; fill after one real run, then mark G6 `passed` (or `failed` with `app.log` excerpt, per Rule 1).
+- Carry-forward from Phase 3 / Phase 4 (unchanged by Phase 5): Typeless step 1/2/3 from `PHASE3-REAL-ACCEPTANCE.md`, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch.
+- Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged — actual reachability via Frida tap still pending G6 real-device validation on real RC003 hardware. Elevated WUDFHost injection + direct HID-over-GATT access remain denied by Windows.
+- `HotkeyPhysicalizer::release_held()` is still a safety-net no-op after a successful tap (held_keys_ is empty). Phase 7 will wire it to `SendInputActionSink`'s release surface.
+- `IInputSource::set_event_sink` (C function pointer + void*) is not bound at the pybind11 seam. The bridge shim falls back to python-side `_sink` storage on the native path. Phase 7 Application coordinator will own source + sink lifetime and add proper callback marshaling.
+
+## Phase 5 closed at 0.6.0-candidate
+
+Phase 5 (Windows input + host action sink) implementation complete; automated gates all green; real-device G6 validation deferred to next hardware-available session. Phase 6 (BLE / WinRT) is the next entry per `cpp-migration-execution-plan.md` §6.

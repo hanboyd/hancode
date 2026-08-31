@@ -50,6 +50,30 @@ try:
         # ``_C``) preserves the single-import-surface rule (ADR-0011).
         PcmFormat,
         WasapiAudioRoute,
+        # Phase 5 / ADR-0015 step 3: input layer binding seam. The
+        # bridge wrappers in ovb_rc003/input_source_native.py /
+        # host_action_sink_native.py access these via the public
+        # remotemic_native package; same single-import-surface rule
+        # (ADR-0011). Windows-only symbols (RawInputSource /
+        # LowLevelKeyboardHook / FridaHidTapSource /
+        # SendInputActionSink) are also exported from _C when
+        # compiled on Windows; the public package re-exports them
+        # with the same ``name is None when binding missing``
+        # convention.
+        InputSourceKind,
+        InputEventKind,
+        SystemAction,
+        ButtonId,
+        ResolvedActionKind,
+        InputEvent,
+        ResolvedAction,
+        IInputSource,
+        FakeInputSource,
+        IHostActionSink,
+        FakeHostActionSink,
+        ActionResolver,
+        DefaultActionResolver,
+        HotkeyPhysicalizer,
     )
     _C_AVAILABLE = True
 except ImportError:
@@ -83,6 +107,20 @@ except ImportError:
     AtvvSession = None  # type: ignore[assignment,misc]
     PcmFormat = None  # type: ignore[assignment,misc]
     WasapiAudioRoute = None  # type: ignore[assignment,misc]
+    InputSourceKind = None  # type: ignore[assignment,misc]
+    InputEventKind = None  # type: ignore[assignment,misc]
+    SystemAction = None  # type: ignore[assignment,misc]
+    ButtonId = None  # type: ignore[assignment,misc]
+    ResolvedActionKind = None  # type: ignore[assignment,misc]
+    InputEvent = None  # type: ignore[assignment,misc]
+    ResolvedAction = None  # type: ignore[assignment,misc]
+    IInputSource = None  # type: ignore[assignment,misc]
+    FakeInputSource = None  # type: ignore[assignment,misc]
+    IHostActionSink = None  # type: ignore[assignment,misc]
+    FakeHostActionSink = None  # type: ignore[assignment,misc]
+    ActionResolver = None  # type: ignore[assignment,misc]
+    DefaultActionResolver = None  # type: ignore[assignment,misc]
+    HotkeyPhysicalizer = None  # type: ignore[assignment,misc]
 
 
 # ``CounterSink`` is the C++ typedef used by ``probe_callback``'s argument
@@ -116,4 +154,18 @@ __all__ = [
     "AtvvSession",
     "PcmFormat",
     "WasapiAudioRoute",
+    "InputSourceKind",
+    "InputEventKind",
+    "SystemAction",
+    "ButtonId",
+    "ResolvedActionKind",
+    "InputEvent",
+    "ResolvedAction",
+    "IInputSource",
+    "FakeInputSource",
+    "IHostActionSink",
+    "FakeHostActionSink",
+    "ActionResolver",
+    "DefaultActionResolver",
+    "HotkeyPhysicalizer",
 ]

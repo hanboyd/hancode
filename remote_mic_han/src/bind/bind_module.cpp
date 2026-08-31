@@ -19,8 +19,21 @@
 #include "remotemic/audio/wasapi_audio_route.hpp"
 #include "remotemic/audio/fake_audio_route.hpp"
 #include "remotemic/audio/upsample_16k_to_48k.hpp"
+#include "remotemic/input/input_event.hpp"
+#include "remotemic/input/i_input_source.hpp"
+#include "remotemic/input/i_host_action_sink.hpp"
+#include "remotemic/input/action_resolver.hpp"
+#include "remotemic/input/hotkey_physicalizer.hpp"
+#include "remotemic/input/fake_input_source.hpp"
+#include "remotemic/input/fake_host_action_sink.hpp"
 
 #ifdef _WIN32
+#include "remotemic/input/raw_input_source.hpp"
+#include "remotemic/input/low_level_keyboard_hook.hpp"
+#include "remotemic/input/frida_hid_tap_source.hpp"
+#include "remotemic/input/send_input_action_sink.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #endif
 
@@ -29,6 +42,7 @@
 namespace py = pybind11;
 using namespace remotemic;
 namespace audio = remotemic::audio;
+namespace input = remotemic::input;
 
 PYBIND11_MODULE(_C, m) {
     m.doc() = "RemoteMic Windows native binding - private implementation "
@@ -845,4 +859,303 @@ PYBIND11_MODULE(_C, m) {
           "UpsampleState is mutated in place to track the carry-over\n"
           "previous sample so consecutive calls compose the same way\n"
           "the python baseline does across BLE notifications.");
+
+    // ------------------------------------------------------------------
+    // 13. Phase 5 / ADR-0015 step 3: input layer binding seam.
+    //
+    // Shape mirrors Phase 4 step 3 (b5c4d9b): interfaces as
+    // std::shared_ptr trampolines, recording doubles + pure-logic
+    // classes cross-platform, real Win32 adapters behind #ifdef _WIN32
+    // (their .cpp files fail-closed to ``start() == false`` on
+    // non-Windows per ADR-0015 §2; on Windows they open real handles).
+    //
+    // ``set_event_sink`` on IInputSource takes a C-style function
+    // pointer + opaque user_data. pybind11 cannot marshal a Python
+    // callable directly into that signature, so the Python bridge
+    // shim (``_NativeInputSource.set_event_sink``) does a ``hasattr``
+    // fallback: if the binding does not yet expose the native sink
+    // callback, the shim stores the callable on the python side.
+    // Phase 7 Application coordinator will own the source + sink
+    // lifetime and add proper callback marshaling at that seam.
+    // ------------------------------------------------------------------
+
+    // 13.1 Enums (cross-platform).
+    py::enum_<input::InputEvent::SourceKind>(m, "InputSourceKind")
+        .value("RawInputKeyboard", input::InputEvent::SourceKind::RawInputKeyboard)
+        .value("RawInputHid",      input::InputEvent::SourceKind::RawInputHid)
+        .value("FridaHidTap",      input::InputEvent::SourceKind::FridaHidTap)
+        .value("LowLevelHook",     input::InputEvent::SourceKind::LowLevelHook)
+        .value("Synthetic",        input::InputEvent::SourceKind::Synthetic);
+        // NOTE: export_values() is intentionally NOT used. The existing
+        // ErrorCode / VoiceTriggerMode / etc. enums in this binding
+        // also omit export_values(); using it here would put
+        // InputSourceKind.{RawInputKeyboard,...} at module scope and
+        // collide with later enum registrations (e.g. registering
+        // InputEventKind.SystemAction as a value AND SystemAction as a
+        // type at the same module scope). Callers must use
+        // _C.InputSourceKind.RawInputKeyboard rather than
+        // _C.RawInputKeyboard. Same convention as ErrorCode.None.
+
+    py::enum_<input::InputEvent::EventKind>(m, "InputEventKind")
+        .value("KeyDown",      input::InputEvent::EventKind::KeyDown)
+        .value("KeyUp",        input::InputEvent::EventKind::KeyUp)
+        .value("KeyCancel",    input::InputEvent::EventKind::KeyCancel)
+        .value("SystemAction", input::InputEvent::EventKind::SystemAction);
+
+    py::enum_<input::SystemAction>(m, "SystemAction")
+        .value("VolumeUp",    input::SystemAction::VolumeUp)
+        .value("VolumeDown",  input::SystemAction::VolumeDown)
+        .value("VolumeMute",  input::SystemAction::VolumeMute)
+        .value("ShowDesktop", input::SystemAction::ShowDesktop)
+        .value("Escape",      input::SystemAction::Escape)
+        .value("Return",      input::SystemAction::Return)
+        .value("Backspace",   input::SystemAction::Backspace)
+        .value("ContextMenu", input::SystemAction::ContextMenu)
+        .value("AppSwitch",   input::SystemAction::AppSwitch)
+        .value("CodexOpen",   input::SystemAction::CodexOpen);
+
+    py::enum_<input::ButtonId>(m, "ButtonId")
+        .value("Power",      input::ButtonId::Power)
+        .value("ArrowUp",    input::ButtonId::ArrowUp)
+        .value("ArrowDown",  input::ButtonId::ArrowDown)
+        .value("ArrowLeft",  input::ButtonId::ArrowLeft)
+        .value("ArrowRight", input::ButtonId::ArrowRight)
+        .value("Ok",         input::ButtonId::Ok)
+        .value("Back",       input::ButtonId::Back)
+        .value("VolumeUp",   input::ButtonId::VolumeUp)
+        .value("VolumeDown", input::ButtonId::VolumeDown)
+        .value("Home",       input::ButtonId::Home)
+        .value("Menu",       input::ButtonId::Menu)
+        .value("Tv",         input::ButtonId::Tv)
+        .value("Mic",        input::ButtonId::Mic)
+        .value("VolumeMute", input::ButtonId::VolumeMute);
+
+    py::enum_<input::ResolvedAction::Kind>(m, "ResolvedActionKind")
+        .value("KeySequence",  input::ResolvedAction::Kind::KeySequence)
+        .value("SystemAction", input::ResolvedAction::Kind::SystemAction)
+        .value("Disabled",     input::ResolvedAction::Kind::Disabled);
+
+    // 13.2 InputEvent POD (cross-platform). The timestamp is exposed
+    // as nanoseconds-since-epoch so pybind11/chrono doesn't need to
+    // special-case steady_clock on every consumer.
+    py::class_<input::InputEvent>(m, "InputEvent")
+        .def(py::init<>(),
+             "Default-constructed event: SourceKind::RawInputKeyboard\n"
+             "+ EventKind::KeyDown + vk/scan/usage/extra_info all 0.")
+        .def_readwrite("source",     &input::InputEvent::source)
+        .def_readwrite("kind",       &input::InputEvent::kind)
+        .def_readwrite("vk_code",    &input::InputEvent::vk_code)
+        .def_readwrite("scan_code",  &input::InputEvent::scan_code)
+        .def_readwrite("usage_id",   &input::InputEvent::usage_id)
+        .def_readwrite("extra_info", &input::InputEvent::extra_info)
+        .def_readwrite("injected",   &input::InputEvent::injected)
+        .def_readwrite("extended",   &input::InputEvent::extended);
+
+    // 13.3 ResolvedAction POD (cross-platform).
+    py::class_<input::ResolvedAction>(m, "ResolvedAction")
+        .def(py::init<>(),
+             "Default-constructed ResolvedAction: kind=Disabled,\n"
+             "vk_code=0, system_action=Escape, key_down=true.")
+        .def_readwrite("kind",           &input::ResolvedAction::kind)
+        .def_readwrite("vk_code",        &input::ResolvedAction::vk_code)
+        .def_readwrite("system_action",  &input::ResolvedAction::system_action)
+        .def_readwrite("key_down",       &input::ResolvedAction::key_down);
+
+    // 13.4 IInputSource interface + recording double (cross-platform).
+    py::class_<input::IInputSource, std::shared_ptr<input::IInputSource>>(
+        m, "IInputSource")
+        .def("start",
+             &input::IInputSource::start,
+             "Open the underlying handle / pump thread. Returns\n"
+             "True on success; False if already started or if the\n"
+             "underlying transport refused. Single-owner: only one\n"
+             "IInputSource may be in ``started == true`` state at any\n"
+             "moment (plan §3 rule 5).")
+        .def("stop",
+             &input::IInputSource::stop,
+             "Tell the source to exit its pump thread and release\n"
+             "the underlying handle. Idempotent.")
+        .def("event_count",
+             &input::IInputSource::event_count,
+             "Monotonic counter of InputEvents delivered to the\n"
+             "registered sink since construction.")
+        .def("dropped_count",
+             &input::IInputSource::dropped_count,
+             "Monotonic counter of events that the source dropped\n"
+             "before delivery (typically SPSC ring overflow).");
+
+    py::class_<input::FakeInputSource, input::IInputSource,
+               std::shared_ptr<input::FakeInputSource>>(
+        m, "FakeInputSource")
+        .def(py::init<>(),
+             "Cross-platform test double. Does NOT start a thread;\n"
+             "events arrive via ``inject_event_for_test``.")
+        .def("inject_event_for_test",
+             &input::FakeInputSource::inject_event_for_test,
+             py::arg("event"),
+             "Test-only helper: deliver ``event`` to the registered\n"
+             "sink as if it had come from a real pump thread.")
+        .def("set_dropped_count_for_test",
+             &input::FakeInputSource::set_dropped_count_for_test,
+             py::arg("dropped"),
+             "Test-only helper: override the dropped counter.")
+        .def("recorded_events",
+             &input::FakeInputSource::recorded_events,
+             "Snapshot under mutex; safe to call from any thread.");
+
+#ifdef _WIN32
+    py::class_<input::RawInputSource, input::IInputSource,
+               std::shared_ptr<input::RawInputSource>>(
+        m, "RawInputSource")
+        .def(py::init<>(),
+             "Real Windows Raw Input adapter (RIDEV_INPUTSINK +\n"
+             "RC003 VID/PID 0x2717/0x32B8 filter + RIM_TYPEKEYBOARD\n"
+             "/RIM_TYPEHID decoding). Windows-only; on non-Windows\n"
+             "the binding does not expose this class at all.");
+
+    py::class_<input::LowLevelKeyboardHook, input::IInputSource,
+               std::shared_ptr<input::LowLevelKeyboardHook>>(
+        m, "LowLevelKeyboardHook")
+        .def(py::init<>(),
+             "Real WH_KEYBOARD_LL hook dispatcher (5 us budget\n"
+             "per ADR-0015 §3.4). Windows-only.")
+        .def("slow_callback_count",
+             &input::LowLevelKeyboardHook::slow_callback_count,
+             "Diagnostic: number of hook callbacks that exceeded the\n"
+             "5 us QPC budget. Not used for control flow; surfaced\n"
+             "in app.log when non-zero.");
+
+    py::class_<input::FridaHidTapSource, input::IInputSource,
+               std::shared_ptr<input::FridaHidTapSource>>(
+        m, "FridaHidTapSource")
+        .def(py::init<>(),
+             "Real Frida IPC loopback socket reader\n"
+             "(127.0.0.1:REMOTE_MIC_RC003_HID_TAP_PORT, default\n"
+             "30684). Windows-only; returns False when no Frida\n"
+             "Gadget is listening.");
+#endif
+
+    // 13.5 IHostActionSink interface + recording double (cross-platform).
+    py::class_<input::IHostActionSink,
+               std::shared_ptr<input::IHostActionSink>>(
+        m, "IHostActionSink")
+        .def("submit_key",
+             [](input::IHostActionSink& self,
+                std::uint16_t vk, bool down,
+                std::chrono::milliseconds deadline) {
+                 return self.submit_key(vk, down, deadline);
+             },
+             py::arg("vk_code"),
+             py::arg("key_down"),
+             py::arg("deadline_ms") = 50,
+             "Submit a single VK key down/up to the host. The\n"
+             "binding converts ``deadline_ms`` from int to\n"
+             "std::chrono::milliseconds. Returns False if the sink\n"
+             "is not started or if the underlying transport refused.")
+        .def("submit_system_action",
+             &input::IHostActionSink::submit_system_action,
+             py::arg("action"),
+             "Submit a semantic system action (volume / showDesktop\n"
+             "/ openCodex / etc.). Returns False on sink-down.")
+        .def("cancel_pending",
+             &input::IHostActionSink::cancel_pending,
+             "Drop any pending key events from the worker queue.")
+        .def("start", &input::IHostActionSink::start,
+             "Start the worker thread / dispatch handle. Idempotent.")
+        .def("stop", &input::IHostActionSink::stop,
+             "Stop the worker thread and release the underlying\n"
+             "handle. Idempotent.")
+        .def("submit_error_count",
+             &input::IHostActionSink::submit_error_count,
+             "Monotonic counter of submit_* calls that returned\n"
+             "False or raised.")
+        .def("submitted_count",
+             &input::IHostActionSink::submitted_count,
+             "Monotonic counter of submit_* calls that succeeded.");
+
+    py::class_<input::FakeHostActionSink, input::IHostActionSink,
+               std::shared_ptr<input::FakeHostActionSink>>(
+        m, "FakeHostActionSink")
+        .def(py::init<>(),
+             "Cross-platform test double. Records every submit_key\n"
+             "/ submit_system_action under a mutex; no side effects\n"
+             "to the host keyboard / shell.")
+        .def("recorded_keys",
+             &input::FakeHostActionSink::recorded_keys,
+             "Snapshot of (vk, key_down) pairs recorded since\n"
+             "start(); safe to call from any thread.")
+        .def("recorded_system_actions",
+             &input::FakeHostActionSink::recorded_system_actions,
+             "Snapshot of SystemAction values recorded since\n"
+             "start(); safe to call from any thread.")
+        .def("pending_count",
+             &input::FakeHostActionSink::pending_count,
+             "Number of submit_key calls still pending in the\n"
+             "internal queue (FakeHostActionSink is a sync\n"
+             "recording double so this stays at 0).")
+        .def("set_submit_fails_for_test",
+             &input::FakeHostActionSink::set_submit_fails_for_test,
+             py::arg("fails"),
+             "Test-only helper: configure the sink to reject every\n"
+             "submit_* call (returns false).");
+
+#ifdef _WIN32
+    py::class_<input::SendInputActionSink, input::IHostActionSink,
+               std::shared_ptr<input::SendInputActionSink>>(
+        m, "SendInputActionSink")
+        .def(py::init<>(),
+             "Real SendInput adapter (bounded queue + worker thread\n"
+             "+ physical scan-code modifiers per ADR-0015 §3.7).\n"
+             "Windows-only; on non-Windows the binding does not\n"
+             "expose this class at all.");
+#endif
+
+    // 13.6 ActionResolver + DefaultActionResolver (cross-platform).
+    py::class_<input::ActionResolver, std::shared_ptr<input::ActionResolver>>(
+        m, "ActionResolver")
+        .def("resolve",
+             [](const input::ActionResolver& self, input::ButtonId btn)
+                 -> std::optional<input::ResolvedAction> {
+                 return self.resolve(btn);
+             },
+             py::arg("button"),
+             "Resolve a ButtonId to a concrete ResolvedAction.\n"
+             "Returns None when the button is unbound in the default\n"
+             "table AND no user override is provided.");
+
+    py::class_<input::DefaultActionResolver, input::ActionResolver,
+               std::shared_ptr<input::DefaultActionResolver>>(
+        m, "DefaultActionResolver")
+        .def(py::init<>(),
+             "Real default-table resolver mirroring\n"
+             "apps/windows/rc003/src/ovb_rc003/key_mapping.py:104-117\n"
+             "byte-identical for VK codes (G3 byte-exact parity per\n"
+             "ADR-0015 §10 step 3). Pure-logic; thread-safe.");
+
+    // 13.7 HotkeyPhysicalizer (cross-platform; depends on IHostActionSink).
+    py::class_<input::HotkeyPhysicalizer>(
+        m, "HotkeyPhysicalizer",
+        py::keep_alive<1, 2>())
+        .def(py::init<input::IHostActionSink&>(),
+             py::arg("sink"),
+             "Construct a physicalizer bound to ``sink``. The\n"
+             "physicalizer holds a reference to ``sink`` (not\n"
+             "ownership); py::keep_alive pins the lifetime so the\n"
+             "physicalizer is destroyed before its sink.")
+        .def("physicalize",
+             [](input::HotkeyPhysicalizer& self,
+                const char* tokens) {
+                 return self.physicalize(tokens);
+             },
+             py::arg("tokens"),
+             "Resolve ``tokens`` (slash-separated chord names, e.g.\n"
+             "\"lctrl+lalt\") and submit the resulting VK sequence\n"
+             "through the bound sink. Returns False on unknown\n"
+             "token or sink-down.")
+        .def("release_held",
+             &input::HotkeyPhysicalizer::release_held,
+             "Best-effort cleanup: re-release any keys the\n"
+             "physicalizer currently holds down. Step 2 sub-pass A\n"
+             "leaves this as a no-op; Phase 7 wires the real release\n"
+             "surface through SendInputActionSink.");
 }

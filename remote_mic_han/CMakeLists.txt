@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(RemoteMicWindows VERSION 0.5.0 LANGUAGES CXX)
+project(RemoteMicWindows VERSION 0.6.0 LANGUAGES CXX)
 
 option(REMOTEMIC_BUILD_TESTS "Build hardware-free C++ tests" ON)
 option(REMOTEMIC_BUILD_PYTHON "Build the CPython binding extension" OFF)
@@ -862,6 +862,51 @@ if(REMOTEMIC_BUILD_TESTS)
             ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
         )
 
+        # Phase 5 / ADR-0015 §6 / step 3: native switch for the input
+        # source + host action sink (G5). The
+        # ``input_source_native.make_input_source`` /
+        # ``host_action_sink_native.make_host_action_sink`` factories
+        # must route through the native shim when the corresponding
+        # ``REMOTEMIC_NATIVE_CHOICE_*=native`` env var is set, and
+        # through the python shim otherwise. ``shadow`` is forbidden
+        # for both modules per plan §3 rule 5 (Raw Input handle +
+        # SendInput dispatch are both side-effecting). Mirrors the
+        # Phase 4 step 5 native switch gate.
+        add_test(
+            NAME remotemic_phase5_input_native_switch
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase5_input_native_switch.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase5_input_native_switch PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
+        # Phase 5 / ADR-0015 §6 / step 3: production routing closeout.
+        # Source-level proof that ``app.py`` references
+        # ``make_input_source`` / ``make_host_action_sink`` and
+        # constructs them in ``App.__init__`` so the env-var switch
+        # takes effect at startup. Same regression-proof shape as
+        # ``test_phase3_production_routing.py`` for the voice /
+        # edge-debouncer / atvv-session trio and as
+        # ``test_phase4_audio_route_production_routing.py`` for the
+        # audio route.
+        add_test(
+            NAME remotemic_phase5_input_production_routing
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase5_input_production_routing.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase5_input_production_routing PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
         # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
         # (G5). Each runs identical scripts through both the python
         # baseline and the C++ binding (via the bridge wrappers) and
@@ -1022,7 +1067,7 @@ if(REMOTEMIC_BUILD_PYTHON)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
     )
-    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm remotemic_voice remotemic_session remotemic_audio pybind11::pybind11)
+    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm remotemic_voice remotemic_session remotemic_audio remotemic_input pybind11::pybind11)
 
     # Copy the public Python wrapper next to the compiled _C.pyd so the
     # build directory is a drop-in importable package.
