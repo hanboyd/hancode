@@ -1,13 +1,13 @@
 # AI Handover
 
 ```yaml
-last_updated: 2026-08-31T05:15:00+08:00
+last_updated: 2026-08-31T11:55:00+08:00
 agent: minimax-m3 handing off to next agent
 provider: minimax handing off to next
 model: minimax-m3 handing off to next
-git_commit_sha: b063ca2
-current_phase: Phase 3 native path "usable after the refactor" — three Phase 3 closeout regressions corrected (b802a33), orphan-source restore (fde9a1e), Typeless step 4 verified (b063ca2 session), Qianwen blocked at adapter SHA mismatch; remaining real-acceptance: Typeless steps 1/2/3 unverified, Step 6/7b not reproducible in healthy setup
-current_task: nothing code-side is blocking. Per the user's "快速完成重构 + 软件健壮" balance, future sessions should pick one deferred bug per cycle and iterate, not try to clear the whole list in one pass
+git_commit_sha: b5c4d9b
+current_phase: Phase 4 step 3 complete (binding seam + G3 bind smoke green at b5c4d9b); steps 1+2 landed earlier (efa6684, d443d03). 31/31 ctest Debug + 31/31 ctest Release; G7 verifier 19/19. Phase 4 has 3 steps remaining (step 4 shadow parity, step 5 native switch, step 6 closeout + version bump).
+current_task: Phase 4 step 4 next — write FakeAudioRoute shadow parity harness (per ADR-0014 §6 step 4). Build-time parity proof only; real-device G6 validation (Typeless + RC003) is the step-5/6 deliverable. Per the user's "快速完成重构 + 软件健壮" balance, ship step 4 in one focused pass, not all 3 remaining steps at once.
 deadline: none hard; current sprint has shipped a working snapshot
 hardware_validation:
   status: partial — Phase 3 native path verified end-to-end on real RC003 for short-press / long-press / graceful-stop; late-audio guard, KeyboardInterrupt path, Typeless/Qianwen integration not exercised
@@ -23,6 +23,9 @@ completed:
   - G7 gate registered: ctest target remotemic_phase3_production_routing + tools/verify_phase3_production_routing.py + 17 in-tree unit tests (8cc0c4c)
   - G7 verify PYTHONPATH fix so _C.cp311-win_amd64.pyd is found ahead of source-tree stubs (cfebb9c)
   - PHASE3-REAL-ACCEPTANCE.md procedure written for RC003 + Typeless + Qianwen manual steps
+  - Phase 4 step 1 (efa6684): ADR-0014 (proposed) + IAudioRoute/drain/close + 5 audio headers + 5 stub .cpp + 5 red-state tests
+  - Phase 4 step 2 (d443d03): 5 stub .cpp replaced with real C++ impls (BoundedPcmQueue mutex drop-oldest, PcmChunker 20 ms silence-padded flush, Upsample16kTo48k 3-tap byte-aligned with audio_playback.py:154-172, FakeAudioRoute recording double with atomic counters, WasapiAudioRoute Windows-only COM init + 48 kHz fallback + jthread writer)
+  - Phase 4 step 3 (b5c4d9b, this session): pybind11 binding seam — bind_module.cpp exposes PcmFormat/IAudioRoute/WasapiAudioRoute/FakeAudioRoute; audio_route_native.py module-level switch (make_audio_route dispatching via choose_implementation; default python, native opt-in); G3 bind smoke (10/10 PASS); FakeAudioRoute.write_calls_ now increments before started-guard so dropped/total ratio is accurate. CMakeLists links remotemic_audio into remotemic_native_c and registers ctest target remotemic_audio_route_bind_smoke. G7 verifier still 19/19; --dry-run still passes; full ctest 31/31 Debug + 31/31 Release.
   - CHANGELOG [0.4.0-candidate] entry published with G7 row
   - Phase 3 corrective (this session, about to commit):
       * bridge_control_windows.py restored byte-for-byte from 19a0004 (was lost from working tree, no git delete event)
@@ -68,9 +71,13 @@ do_not_change:
   - Do not start a C++ rewrite of working product functionality outside the phase plan
   - The three Phase 3 corrective fixes in this session are deliberately byte-for-byte restores from 19a0004; do not "improve" them while iterating on separate bugs
 next:
-  - On any new session: git log --oneline -5 to find the Phase 3 corrective commit, then read CURRENT_STATUS.md and this handover before doing anything
-  - Per the user's "快速完成重构 + 软件健壮" balance: pick ONE deferred item per cycle, fix it, validate, commit, update CURRENT_STATUS. Do not try to clear the whole list in one pass
-  - For Phase 4 entry: requires a fresh ADR per cpp-migration-version-policy.md Rule 1/2; do not start without one. Phase 3's remaining deferred items may be carried forward or marked abandoned, per user direction
-  - Do not re-run the full PHASE3-REAL-ACCEPTANCE.md table from scratch unless a Phase 3 source file is changed; the Step 1/2/7a PASS results are durable observations
+  - On any new session: git log --oneline -5 to find the latest Phase 4 step 3 commit (b5c4d9b), then read CURRENT_STATUS.md and this handover before doing anything
+  - Phase 4 has 3 steps remaining. Pick ONE per cycle per the user's "快速完成重构 + 软件健壮" balance:
+      1. step 4: FakeAudioRoute shadow parity harness (build-time parity proof; python baseline + native FakeAudioRoute exercise the same recorded_samples surface through choose_implementation)
+      2. step 5: native switch + verify (REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native end-to-end; real-device G6 with Typeless + RC003)
+      3. step 6 closeout: ADR-0014 accepted, version bump 0.4.0-candidate → 0.5.0-candidate (CMake / Python __version__ / pyproject.toml in lockstep)
+  - Phase 3 deferred items (Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch) carry forward unchanged. Phase 4 real-acceptance (G6) is Typeless + RC003 only per ADR-0014 §10; Qianwen Frida adapter work is explicitly NOT in scope.
+  - Do not re-run the full PHASE3-REAL-ACCEPTANCE.md table from scratch unless a Phase 3 source file is changed; the Step 1/2/7a PASS results are durable observations.
+  - Do not re-run G3 (remotemic_audio_route_bind_smoke) or full ctest unless a Phase 4 source file changes; b5c4d9b's 31/31 results are durable.
 first_command_for_next_agent: git status --short --untracked-files=all
 ```

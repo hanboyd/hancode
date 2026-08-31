@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T05:15:00+08:00
+- `last_updated`: 2026-08-31T11:55:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: b063ca2
-- `current_phase`: Phase 3 implementation complete; three Phase 3 closeout regressions corrected in this session; native path real-device acceptance partially observed (3 PASS, 2 deferred, 1 not-reproducible)
+- `git_commit_sha`: b5c4d9b
+- `current_phase`: Phase 4 step 3 complete (binding seam + G3 bind smoke green). Steps 1+2 landed earlier this session (efa6684, d443d03). Phase 3 native path stable (G7 verifier 19/19, ctest 31/31 Debug + Release).
 - `hardware_available`: true
 
 ## Completed
@@ -86,10 +86,31 @@ Both files remain unimported by any other code in HEAD (no caller needs them yet
 - Release signing: pending both acceptance completion and an available signing identity.
 - Phase 4 (audio WASAPI), Phase 5 (Windows input), Phase 6 (BLE / WinRT), Phase 7 (app coordinator), Phase 8 (packaging switch), Phase 9 (UI decision): not started; Phase 3 must complete remaining real acceptance first per `docs/architecture/cpp-migration-execution-plan.md` §3 rule 9, OR the user may enter Phase 4 with the existing deferred items carried forward (executive call).
 
+## Phase 4 (audio WASAPI) — in progress (2026-08-31)
+
+Per user direction 2026-08-31, Phase 4 entry is an executive call: the existing Phase 3 deferred items (Typeless step 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen structural) are carried forward as out-of-scope for Phase 4. Per ADR-0014 §10, real-acceptance gate (G6) is Typeless + RC003 only; Qianwen Frida adapter work is explicitly NOT in scope.
+
+- `efa6684` step 1: ADR-0014 (proposed) + 5 module headers + 5 stub .cpp + 5 red-state unit tests. `IAudioRoute` extended with `drain(timeout)` + `close()` per ADR §4; original `stop()` is now strictly "tell writer to exit"; the previous overloaded `stop()` that did both is split intentionally.
+- `d443d03` step 2: 5 stub .cpp replaced with real implementations (mutex-protected drop-oldest BoundedPcmQueue, 20 ms PcmChunker with silence-padded flush, 3-tap linear Upsample16kTo48k byte-aligned with `audio_playback.py:154-172`, recording FakeAudioRoute with atomic counters, Windows-only WASAPI backend with COM init + 48 kHz fallback + atomic stop flag + jthread writer pulling via PcmChunker+Upsample). 30/30 ctest green (Debug + Release).
+- `b5c4d9b` step 3 (this session): pybind11 binding seam + Python shim + G3 bind smoke. `bind_module.cpp` exposes `PcmFormat` (POD), `IAudioRoute` (trampoline base), `WasapiAudioRoute`, `FakeAudioRoute`. `audio_route_native.py` provides `make_audio_route(endpoint_name, host_api_name)` dispatching via `choose_implementation`. Default = python (matches migration plan §1 rule 4); native opt-in via `REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native`. `shadow` is NOT exposed per plan §3 rule 5 (real WASAPI device handle is side-effecting). `FakeAudioRoute.write_calls_` now increments before the started-guard so the counter reflects every invocation including rejected ones; operators can compute `1 - dropped_/write_calls_` success rate. CMakeLists links `remotemic_audio` into `remotemic_native_c` and registers ctest target `remotemic_audio_route_bind_smoke` (G3).
+
+### Gates after Phase 4 step 3 (this session)
+
+- `ctest -C Debug remotemic_audio_route_bind_smoke`: **PASS** (10/10 assertions: PcmFormat round-trip × 3, FakeAudioRoute isinstance + lifecycle counters + last_format + stop idempotent, WasapiAudioRoute isinstance + default endpoint + drop/write_error counters, drain int-timeout).
+- Full Debug ctest: **31/31 PASS** (was 30/30 at `d443d03`; +1 G3 test).
+- Full Release ctest: **31/31 PASS**.
+- `tools/verify_phase3_production_routing.py` (G7 verifier): **19/19 PASS**; new `audio_route` choice entry does not regress existing dispatch paths (voice / edge_debouncer / atvv_session).
+- `python -m ovb_rc003 --dry-run`: **PASS** (all ovb_rc003 modules including `audio_route_native` import successfully).
+
+### Phase 4 step 3 deferred / not yet wired
+
+- `_NativeAudioRoute.open()` requires a real WASAPI endpoint (`CABLE Output` etc.); CI / headless shells fail closed at `_resolve_device_index`. Step 4's `FakeAudioRoute` shadow parity harness is the build-time proof point. Real-device validation (G6) happens at step 5 or step 6.
+- WASAPI's single-owner rule (plan §3 rule 5) is honored: the C++ side owns the device handle; Python only drives the lifecycle (`start/write/drain/stop/close`). No `numpy` or Python-side audio buffer slicing crosses the binding seam yet.
+
 ## Next
 
-1. On any new session: `git log --oneline -5` to find the Phase 3 corrective commit SHA (this session's landing), then read this file + `AI_HANDOVER.md` before doing anything.
-2. Per the user's "一点点改 bug" cadence: pick one deferred item per session cycle, fix it, validate, commit, update CURRENT_STATUS. Don't try to clear the whole list in one pass.
-3. Do not re-run the full `PHASE3-REAL-ACCEPTANCE.md` table from scratch unless the user explicitly requests it; the Step 1/2/7a PASS results are durable observations that only need re-validation if a Phase 3 source file is changed.
-4. Uninstall/residue check + signing only with explicit user authorization.
-5. Phase 4 entry requires a fresh ADR per [[cpp-migration-version-policy]] Rule 1/2; do not start without one.
+1. On any new session: `git log --oneline -5` to find the latest Phase 4 commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
+2. Phase 4 has 3 steps remaining: step 4 (shadow parity harness with FakeAudioRoute), step 5 (native switch + verify), step 6 (closeout: ADR-0014 accepted + version bump `0.4.0-candidate → 0.5.0-candidate`). Pick one per cycle, validate, commit, update CURRENT_STATUS.
+3. Do not start Phase 5 (Windows input) until Phase 4 reaches step 6 closeout.
+4. Carry-forward from Phase 3: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch — all unchanged. Phase 4 real-acceptance (G6) is Typeless + RC003 only per ADR-0014 §10.
+5. Uninstall/residue check + signing only with explicit user authorization.
