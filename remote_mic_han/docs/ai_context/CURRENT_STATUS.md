@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T17:20:00+08:00
+- `last_updated`: 2026-08-31T17:50:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: 18320f7
-- `current_phase`: **Phase 4 closed.** ADR-0014 → accepted; version bumped 0.4.0-candidate → 0.5.0-candidate; CHANGELOG `[0.5.0-candidate]` entry written with G1/G2/G3/G5 green table + G6 deferred row per ADR-0014 §10. 35/35 ctest Debug + 35/35 ctest Release after version sync. G6 real-device procedure (`docs/testing/PHASE4-REAL-ACCEPTANCE.md`) awaits a human operator on real hardware. Next phase is an executive call: G6 execution OR Phase 5 (Windows input).
+- `git_commit_sha`: 3a547e5
+- `current_phase`: **Phase 5 step 1 complete (interfaces + stubs + red-state tests).** ADR-0015 (proposed) + `IInputSource` / `IHostActionSink` / `ActionResolver` + `InputEvent` value type + 5 stub Win32 adapters + 2 cross-OS recording doubles + 5 ctest targets. 40/40 ctest Debug + 40/40 ctest Release (was 35/35 at `18320f7`; +5 Phase 5 step 1 tests). Zero behavior change. Phase 5 has 2 steps remaining: step 2 (real C++ implementations: Raw Input parsing / Frida HID tap reader / LL hook dispatcher / SendInput adapter, default-table ActionResolver), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
 - `hardware_available`: true
 
 ## Completed
@@ -193,9 +193,38 @@ Per ADR-0014 §6 step 6: flip status to `Accepted`, version bump per `cpp-migrat
 ## Next
 
 1. On any new session: `git log --oneline -5` to find the latest commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
-2. **Phase 4 closed.** Next phase: **Phase 5 (Windows input)** per `docs/architecture/cpp-migration-execution-plan.md` §3 rule 9. Phase 5 scope = Frida HID tap / hotkey physicalize / LLKHF_INJECTED / Qianwen adapter (already deferred structurally from Phase 3) — but Phase 4 closeout **does not authorize** auto-starting Phase 5; that's an executive call.
-3. G6 real-device validation (RC003 + VB-Cable + Typeless): when convenient, run `docs/testing/PHASE4-REAL-ACCEPTANCE.md` and paste the recording-template table back; update the CHANGELOG `[0.5.0-candidate]` G6 row from `deferred` to `passed` (or `failed` per Rule 1).
-4. Carry-forward from Phase 3: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch — all unchanged.
+2. **Phase 5 step 1 closed.** Phase 5 has 2 steps remaining: step 2 (real C++ implementations: Raw Input parsing / Frida HID tap reader / LL hook dispatcher / SendInput adapter + default-table ActionResolver), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump `0.5.0-candidate → 0.6.0-candidate`).
+3. G6 real-device validation (RC003 + VB-Cable + Typeless) per `PHASE4-REAL-ACCEPTANCE.md` is still open as an unresolved carry-forward — when convenient, paste the recording-template table back and update the CHANGELOG `[0.5.0-candidate]` G6 row.
+4. Phase 3 carry-forward unchanged: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch.
 5. Uninstall/residue check + signing only with explicit user authorization.
 6. Do NOT bump `installer/RemoteMicRC003Setup.iss` `AppVersion` — that is phase 8 work per Rule 1.
+
+## Phase 5 step 1 — interfaces + stubs + red-state tests (2026-08-31, this session)
+
+Per `docs/architecture/cpp-migration-execution-plan.md` §5 阶段 5 + ADR-0015 §10 step 1: declare the architectural boundaries, interface contracts, and red-state unit tests. Zero behavior change. Mirrors Phase 4 step 1 (`efa6684`) shape exactly.
+
+- `3a547e5` step 1 (this session): interfaces + stubs
+  - `docs/decisions/ADR-0015-phase5-windows-input-cpp.md` (NEW) — status `proposed`. Scope = 3 commits (Raw Input parsing / LL hook / SendInput). `IInputSource` / `IHostActionSink` / `ActionResolver` / `InputEvent` / `SystemAction` contracts. Hook callback 5 us budget + no GIL wait + no file/process/audio in callback path (plan §3 rule 6). Single-owner rule (Raw Input ↔ Frida HID tap ↔ LL hook, plan §3 rule 5). Keep user's `key_bindings.json` (plan §3 rule 8 — C++ side accepts only already-resolved binding, never reads files). Qianwen physicalizer stays in isolated adapter (plan §3 rule 7). Exit gates G1/G2/G3/G4/G5/G6.
+  - `include/remotemic/input/*.hpp` (NEW, 11 headers): `input_event.hpp` (POD-ish value type), `i_input_source.hpp` (sink registration + start/stop + diagnostics), `i_host_action_sink.hpp` (submit_key/submit_system_action/cancel_pending + start/stop), `action_resolver.hpp` (`ButtonId` enum + `ResolvedAction` struct + `ActionResolver` interface), `low_level_keyboard_hook.hpp` (Windows-only stub), `raw_input_source.hpp` (Windows-only stub), `frida_hid_tap_source.hpp` (Windows-only stub), `send_input_action_sink.hpp` (Windows-only stub), `hotkey_physicalizer.hpp` (chord-name → VK sequence), `fake_input_source.hpp` + `fake_host_action_sink.hpp` (cross-OS recording doubles).
+  - `src/input/*.cpp` (NEW, 7 files): 2 recording double impls + 5 stubs (each Windows-only stub refuses `start()` / rejects `submit_*` / returns `nullopt` for `resolve()` so red-state tests can assert the contract boundary).
+  - `tests/unit/test_input_event.cpp` (NEW): 5 value-type tests (default construction + SourceKind enum + EventKind enum + SystemAction enum reachability + ≤ 64 byte size budget).
+  - `tests/unit/test_i_input_source.cpp` (NEW): 4 tests (FakeInputSource records injected events + dropped counter settable + Windows stubs refuse start + polymorphism).
+  - `tests/unit/test_i_host_action_sink.cpp` (NEW): 6 tests (recording double records key submissions + system actions + cancel clears pending + submit-failure increments error + SendInput stub rejects + polymorphism).
+  - `tests/unit/test_low_level_keyboard_hook_stub.cpp` (NEW): 3 tests (hook refuses start + counts start at zero + accepts sink registration before start).
+  - `tests/unit/test_action_resolver_stub.cpp` (NEW): 3 tests (stub returns nullopt for every ButtonId + ResolvedAction::Kind enum coverage + ButtonId enum coverage).
+  - `CMakeLists.txt`: new `remotemic_input` STATIC library linking `remotemic_core` (7 .cpp files) + 5 new ctest targets wired.
+
+### Gates after Phase 5 step 1 (this session)
+
+- `ctest -C Debug`: **40/40 PASS** (was 35/35 at `18320f7`; +5 step 1 tests).
+- `ctest -C Release`: **40/40 PASS**.
+- `tools/verify_phase3_production_routing.py`: **19/19 PASS** (no Phase 3 regression from new library).
+- `tools/verify_phase4_native_switch.py`: **4/4 PASS**.
+- `tools/verify_phase4_audio_parity.py`: **2/2 PASS**.
+- `python -m ovb_rc003 --dry-run`: PASS.
+
+### Phase 5 step 1 deferred / open
+
+- All real Win32 implementations are still stubs (refuse start / reject submit / return nullopt). Production behavior is unchanged: still 100% python baseline. Step 2 lands the real C++ for Raw Input / Frida HID tap / LL hook / SendInput + default-table ActionResolver.
+- Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged by Phase 5 step 1 — actual reachability via Frida tap still pending G6 real-device validation.
 5. Uninstall/residue check + signing only with explicit user authorization.
