@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T19:15:00+08:00
-- `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: 7ffc269
-- `current_phase`: **Phase 5 step 2 sub-pass A complete (pure-logic stubs replaced).** Real `DefaultActionResolver` mirroring `key_mapping.py:104-117` (Power→Escape, Arrows→VK_UP/DOWN/LEFT/RIGHT, Ok→VK_RETURN, Back→VK_BACK, VolumeUp/Down→SystemAction, Home→ShowDesktop, Menu→ContextMenu, Tv→AppSwitch, Mic→nullopt, VolumeMute→nullopt) + real `HotkeyPhysicalizer` mirroring `hotkey.py:HotkeySpec.parse` + `win32_keys.py:VK_CODES` (chord parser with `_MODIFIER_ORDER` + `_TOKEN_ALIASES`, full VK table for named tokens / digits / letters / f-keys / numpad / `vk_XX` hex). Tap-style submit (modifiers down in canonical order, trigger, trigger up, modifiers reverse). 41/41 ctest Debug + 41/41 ctest Release (was 40/40 at `3a547e5`; +1 net from renaming the resolver test + adding hotkey test). Zero behavior change. Phase 5 has 2 steps remaining: step 2 sub-pass B (real Win32 adapters: Raw Input parsing / LL hook dispatcher / Frida HID tap reader / SendInput adapter), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
+- `last_updated`: 2026-08-31T22:27:00+08:00
+- `updated_by`: hermes-agent
+- `git_commit_sha`: bab62b5
+- `current_phase`: **Phase 5 step 2 sub-pass B complete (real Win32 adapters).** 4 stubs replaced: LowLevelKeyboardHook (WH_KEYBOARD_LL + SPSC ring + 5 us budget), RawInputSource (RIDEV_INPUTSINK + RC003 VID/PID filter + RIM_TYPEKEYBOARD/HID decoding), SendInputActionSink (bounded queue + worker thread + physical scan-code path + system action dispatch), FridaHidTapSource (loopback TCP + JSON gatt_read parser + usage ID decode). All 4 have `#ifdef _WIN32` / `#else` fail-closed stubs. 21/21 ctest Debug + 21/21 ctest Release. /W4 clean. Zero behavior change (production still uses python baseline). Phase 5 has 1 step remaining: step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
 - `hardware_available`: true
 
 ## Completed
@@ -193,7 +193,7 @@ Per ADR-0014 §6 step 6: flip status to `Accepted`, version bump per `cpp-migrat
 ## Next
 
 1. On any new session: `git log --oneline -5` to find the latest commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
-2. **Phase 5 step 2 sub-pass A closed at `7ffc269`.** Phase 5 has 2 steps remaining: step 2 sub-pass B (real Win32 adapters: Raw Input parsing / LL hook dispatcher / Frida HID tap reader / SendInput adapter — all Windows-only, so most testing will be shadow-parity until G6 real-device validation), step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump `0.5.0-candidate → 0.6.0-candidate`).
+2. **Phase 5 step 2 sub-pass B closed at `bab62b5`.** Phase 5 has 1 step remaining: step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump `0.5.0-candidate → 0.6.0-candidate`).
 3. G6 real-device validation (RC003 + VB-Cable + Typeless) per `PHASE4-REAL-ACCEPTANCE.md` is still open as an unresolved carry-forward — when convenient, paste the recording-template table back and update the CHANGELOG `[0.5.0-candidate]` G6 row.
 4. Phase 3 carry-forward unchanged: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch.
 5. Uninstall/residue check + signing only with explicit user authorization.
@@ -258,3 +258,36 @@ Per ADR-0015 §3.5 + §4 step 2: replace the 2 pure-logic stubs (no Win32 depend
 - Windows-only stub adapters unchanged: `LowLevelKeyhook` / `RawInput` / `FridaHidTap` / `SendInput` still refuse `start()` / reject `submit_*` / return `nullopt` for `resolve()`. Production behavior is still 100% python baseline; sub-pass B lands the real Win32 adapters.
 - HotkeyPhysicalizer `release_held()` is currently a safety-net no-op (after a successful tap nothing is held). When sub-pass B wires the real SendInputActionSink release surface, the held_keys_ invariant moves to the sink side and `release_held()` becomes a meaningful best-effort cleanup hook.
 - Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged — actual reachability via Frida tap still pending G6 real-device validation.
+
+## Phase 5 step 2 sub-pass B — real Win32 adapters (2026-08-31, this session)
+
+Per ADR-0015 §3.4 / §3.6 / §3.7 + §10 step 2: replace the 4 remaining Windows-only stubs with real implementations. Each adapter is large + Windows-only; all have `#ifdef _WIN32` / `#else` fail-closed stubs for non-Windows CI hosts per ADR-0015 §2.
+
+- `bab62b5` (this session):
+  - `src/input/low_level_keyboard_hook.cpp` (NEW, 344 lines) — real WH_KEYBOARD_LL implementation. Hidden message-only HWND on dedicated thread, `SetWindowsHookExW(WH_KEYBOARD_LL, ...)`, lock-free SPSC ring buffer (256 capacity, drop-oldest overflow). Hook callback only reads `KBDLLHOOKSTRUCT` fields + enqueues `InputEvent`; never calls SendInput/GetMessage/WriteFile/Frida IPC/GIL/mutex per ADR-0015 §3 rule 6. `QueryPerformanceCounter` timing in callback entry/exit; over-budget callbacks (default 5 us) increment `slow_callback_count_`. Drain happens on the pump thread after each `GetMessage/DispatchMessage` iteration, not in the callback. Thread-local `tls_current_instance` for static `HookProc` dispatch.
+  - `src/input/raw_input_source.cpp` (NEW, 376 lines) — real Raw Input adapter. Registers `RIDEV_INPUTSINK` for HID usage page 0x01 (Generic Desktop / Keyboard) and 0x0C (Consumer Control). RC003 VID/PID filter via `GetRawInputDeviceInfoW` path substring match (classic `VID_2717&PID_32B8` + BLE `Dev_VID&012717_PID&32B8` shapes). `RIM_TYPEKEYBOARD` → vk_code + scan_code; `RIM_TYPEHID` → first byte as usage_id. SPSC ring buffer on pump thread.
+  - `src/input/send_input_action_sink.cpp` (NEW, 381 lines) — real SendInput adapter. Bounded key queue (256, drop-oldest) with worker thread draining via `user32.SendInput` batch. Physical scan-code path for modifier VK codes (`_PHYSICAL_SCAN_CODES` from `win32_input.py`) preserving left/right identity. System actions dispatch directly: volume via `SendMessage(HWND_BROADCAST, WM_APPCOMMAND, ...)`, show desktop via `keybd_event(VK_LWIN, VK_D)`, escape/return/backspace/context menu/app switch via `keybd_event`. `VerifySendInputAvailable()` checks `user32.dll` + `SendInput` export at start.
+  - `src/input/frida_hid_tap_source.cpp` (NEW, 363 lines) — real Frida IPC socket reader. Connects to `127.0.0.1:30684` (configurable via `REMOTE_MIC_RC003_HID_TAP_PORT`). IO thread blocks in `recv()`, accumulates newline-delimited JSON, parses `gatt_read` messages via hand-rolled subset parser (no JSON dependency), decodes 9-byte RC003 HID report to usage IDs via `kUsageIdTable` mirroring `device_profile.py:43-57`. SPSC ring buffer. Socket disconnect → IO thread exits; `stop()` uses `shutdown(SD_BOTH)` to interrupt `recv()`.
+  - 4 stub `.cpp` files DELETED (`_low_level_keyboard_hook_stub.cpp`, `_raw_input_source_stub.cpp`, `_frida_hid_tap_source_stub.cpp`, `_send_input_action_sink_stub.cpp`).
+  - Headers updated: `low_level_keyboard_hook.hpp` (+SPSC members + `HookProc`/`WndProcThunk` statics + `PumpThreadMain`/`EnqueueFromHook`), `raw_input_source.hpp` (+SPSC members + `PumpThreadMain`/`EnqueueEvent`), `send_input_action_sink.hpp` (+mutex/CV/queue + worker thread), `frida_hid_tap_source.hpp` (+SPSC members + `IoThreadMain`/`EnqueueEvent` + port_ + sock_).
+  - `CMakeLists.txt`: `remotemic_input` STATIC library now lists the 4 real `.cpp` files instead of `_stub.cpp` siblings.
+  - `tests/unit/test_i_input_source.cpp` — `test_windows_stubs_now_real` replaces `test_windows_stubs_refuse_start_until_step_2`: asserts `start() == true` on Windows for `RawInputSource` + `LowLevelKeyboardHook` (FridaHidTapSource may fail-closed when no Frida Gadget is running).
+  - `tests/unit/test_i_host_action_sink.cpp` — `test_send_input_starts_on_windows` replaces `test_send_input_stub_rejects_submits_until_step_2`: asserts `start() == true` + `submit_key` + `submit_system_action` succeed on Windows.
+  - `tests/unit/test_low_level_keyboard_hook_stub.cpp` — inlined `assert(hook.start())` to fix `/W4` C4189 in Release builds (same pattern as sub-pass A's `assert(phys.physicalize(...))`). Header comment + printf updated to reflect real implementation.
+
+### Gates after Phase 5 step 2 sub-pass B (this session)
+
+- `ctest -C Debug`: **21/21 PASS** (same count as 7ffc269; 3 tests updated to reflect real adapter behavior instead of stub refusal).
+- `ctest -C Release`: **21/21 PASS**.
+- `/W4` build clean — only C4324 alignment padding warnings (expected for SPSC `alignas(64)` ring buffers); C4189 fixed via inlined asserts.
+- `tools/verify_phase3_production_routing.py`: **19/19 PASS** (no Phase 3 regression).
+- `tools/verify_phase4_native_switch.py`: **4/4 PASS**.
+- `tools/verify_phase4_audio_parity.py`: **2/2 PASS**.
+- `python -m ovb_rc003 --dry-run`: PASS.
+
+### Phase 5 step 2 sub-pass B deferred / open
+
+- Step 3 remains: native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump `0.5.0-candidate → 0.6.0-candidate`.
+- HotkeyPhysicalizer `release_held()` is still a safety-net no-op; step 3 or Phase 7 will wire it to `SendInputActionSink`'s release surface.
+- Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged — actual reachability via Frida tap still pending G6 real-device validation on real RC003 hardware.
+- Real-device G6 validation (RC003 + VB-Cable + Typeless per `PHASE4-REAL-ACCEPTANCE.md`) is still open as a carry-forward from Phase 4.
