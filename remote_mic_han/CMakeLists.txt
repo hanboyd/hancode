@@ -220,13 +220,14 @@ add_library(remotemic_audio STATIC
 # (no <windows.h>) so tests compile on Linux/macOS CI runners.
 # ---------------------------------------------------------------------------
 add_library(remotemic_input STATIC
+    src/input/action_resolver.cpp
     src/input/fake_input_source.cpp
     src/input/fake_host_action_sink.cpp
+    src/input/hotkey_physicalizer.cpp
     src/input/low_level_keyboard_hook_stub.cpp
     src/input/raw_input_source_stub.cpp
     src/input/frida_hid_tap_source_stub.cpp
     src/input/send_input_action_sink_stub.cpp
-    src/input/hotkey_physicalizer_stub.cpp
 )
 
 target_include_directories(remotemic_input
@@ -554,18 +555,32 @@ if(REMOTEMIC_BUILD_TESTS)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
-    # Phase 5 / ADR-0015 step 1: ActionResolver stub red-state +
-    # default-table preview tests (default-table coverage lands with
-    # the real implementation in step 2).
-    add_executable(remotemic_action_resolver_stub_tests tests/unit/test_action_resolver_stub.cpp)
-    target_link_libraries(remotemic_action_resolver_stub_tests PRIVATE remotemic_input)
+    # Phase 5 / ADR-0015 step 2: real default-table ActionResolver tests
+    # (mirror key_mapping.py:104-117). The step 1 stub is removed; the
+    # step 1 red-state row is preserved as the comment below.
+    add_executable(remotemic_action_resolver_tests tests/unit/test_action_resolver.cpp)
+    target_link_libraries(remotemic_action_resolver_tests PRIVATE remotemic_input)
     if(MSVC)
-        target_compile_options(remotemic_action_resolver_stub_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+        target_compile_options(remotemic_action_resolver_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
     else()
-        target_compile_options(remotemic_action_resolver_stub_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(remotemic_action_resolver_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
-    add_test(NAME remotemic_action_resolver_stub_tests COMMAND remotemic_action_resolver_stub_tests)
-    set_tests_properties(remotemic_action_resolver_stub_tests PROPERTIES
+    add_test(NAME remotemic_action_resolver_tests COMMAND remotemic_action_resolver_tests)
+    set_tests_properties(remotemic_action_resolver_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    # Phase 5 / ADR-0015 step 2: HotkeyPhysicalizer chord-name parser +
+    # VK code table tests (mirror hotkey.py + win32_keys.py).
+    add_executable(remotemic_hotkey_physicalizer_tests tests/unit/test_hotkey_physicalizer.cpp)
+    target_link_libraries(remotemic_hotkey_physicalizer_tests PRIVATE remotemic_input)
+    if(MSVC)
+        target_compile_options(remotemic_hotkey_physicalizer_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_hotkey_physicalizer_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_hotkey_physicalizer_tests COMMAND remotemic_hotkey_physicalizer_tests)
+    set_tests_properties(remotemic_hotkey_physicalizer_tests PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 

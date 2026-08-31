@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include <remotemic/input/i_host_action_sink.hpp>
 #include <remotemic/input/input_event.hpp>
@@ -29,6 +30,7 @@ private:
     IHostActionSink& sink_;
     std::uint64_t physicalized_count_{0};
     std::uint64_t physicalize_error_count_{0};
+    std::vector<std::uint16_t> held_keys_;
 };
 
 } // namespace remotemic::input

@@ -56,4 +56,18 @@ public:
     resolve(ButtonId button) const noexcept = 0;
 };
 
+// Phase 5 / ADR-0015 §3.5 step 2: the real default-table resolver.
+// Pure-logic; no I/O; thread-safe by construction (read-only after
+// construction). Mirrors ``apps/windows/rc003/src/ovb_rc003/key_mapping.py``
+// default table (lines 104-117). ``ButtonId::Mic`` returns nullopt
+// because the microphone is owned by the voice hotkey path
+// (HotkeyPhysicalizer) — not a default table entry. ``ButtonId::VolumeMute``
+// returns nullopt per the RC003 "no physical mute key" convention;
+// users may bind it via user keymap (Phase 7 Application coordinator).
+class DefaultActionResolver final : public ActionResolver {
+public:
+    std::optional<ResolvedAction>
+    resolve(ButtonId button) const noexcept override;
+};
+
 } // namespace remotemic::input
