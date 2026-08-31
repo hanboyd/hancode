@@ -1,7 +1,8 @@
 # ADR-0014: Phase 4 — Bounded Audio Queue + WASAPI AudioRoute C++ 迁移边界
 
-- Status: **proposed**
+- Status: **accepted**
 - Date: 2026-08-31
+- Closed: 2026-08-31 (Phase 4 step 6 closeout, version bump `0.4.0-candidate → 0.5.0-candidate`)
 - Phase: 4 (of 9, per `docs/architecture/cpp-migration-execution-plan.md`)
 - Related: [ADR-0011](ADR-0011-cpp-python-binding-and-error-model.md)（Python/C++ 绑定与错误模型）、[ADR-0012](ADR-0012-atvv-adpcm-phase2-boundary.md)（Phase 2 ATVV/ADPCM）、[ADR-0013](ADR-0013-phase3-session-state-machine-boundary.md)（Phase 3 会话状态机）
 

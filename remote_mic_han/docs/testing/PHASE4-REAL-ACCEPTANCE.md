@@ -1,4 +1,4 @@
-# Phase 4 Real Acceptance — Manual Procedure (0.4.0-candidate)
+# Phase 4 Real Acceptance — Manual Procedure (0.5.0-candidate)
 
 Scope: native Phase 4 WASAPI AudioRoute C++ implementation
 (`remotemic_native._C.WasapiAudioRoute`) exposed via the python bridge
@@ -8,7 +8,7 @@ through the production call site
 test mode, no GUI change, no protocol change.** Phase 4 only replaces
 the audio-playback owner (python PortAudio baseline → C++ WASAPI).
 
-Companion to `apps/windows/rc003/CHANGELOG.md` (`[0.4.0-candidate]` /
+Companion to `apps/windows/rc003/CHANGELOG.md` (`[0.5.0-candidate]` /
 `真机 / 第三方验收（deferred）`) and
 `docs/decisions/ADR-0014-phase4-audio-wasapi-cpp.md`.
 

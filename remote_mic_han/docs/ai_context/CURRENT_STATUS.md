@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T15:50:00+08:00
+- `last_updated`: 2026-08-31T17:10:00+08:00
 - `updated_by`: minimax-m3 (claude code)
-- `git_commit_sha`: 80126cd
-- `current_phase`: Phase 4 step 5 complete (G5 native switch + production routing gates green: app.py routes through `make_audio_route`, `REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native` reaches the C++ `WasapiAudioRoute` shim). 35/35 ctest Debug + 35/35 ctest Release. Real-device validation (G6) procedure documented in `docs/testing/PHASE4-REAL-ACCEPTANCE.md`; awaiting human execution per ADR-0014 §10.
+- `git_commit_sha`: (Phase 4 step 6 closeout pending commit)
+- `current_phase`: Phase 4 step 6 closeout in flight (ADR-0014 → accepted; version bump 0.4.0-candidate → 0.5.0-candidate; CHANGELOG `[0.5.0-candidate]` entry written with G1/G2/G3/G5 green table + G6 deferred row per ADR-0014 §10). 35/35 ctest Debug + 35/35 ctest Release after the version sync. Real-device G6 (RC003 + VB-Cable + Typeless) procedure documented in `docs/testing/PHASE4-REAL-ACCEPTANCE.md`; awaiting human execution.
 - `hardware_available`: true
 
 ## Completed
@@ -161,10 +161,41 @@ Per ADR-0014 §6 step 5: wire the production call site through the factory so `R
 - Real-device validation (G6 per `docs/testing/PHASE4-REAL-ACCEPTANCE.md`) — Typeless + RC003 + VB-Cable manual procedure. ADR-0014 §10 explicitly states G6 is Typeless + RC003 only (Qianwen Frida adapter work is structurally out of scope, see Phase 3 deferred list). The procedure is documented but not yet executed by a human operator.
 - `PcmFormat` / `WasapiAudioRoute` public re-export: built and verified in `apps/windows/rc003/src/remotemic_native/__init__.py` (rebuild staged the updated wrapper into both `build/Release` and `build/Debug`).
 
+## Phase 4 step 6 — closeout (2026-08-31, this session)
+
+Per ADR-0014 §6 step 6: flip status to `Accepted`, version bump per `cpp-migration-version-policy.md` Rule 2, CHANGELOG entry, and document G6 as deferred (G1/G2/G3/G5 green; G6 real-device + Typeless validation procedure is in place per ADR-0014 §10, awaits a human operator on real hardware).
+
+- step 6 (this session): closeout
+  - **ADR-0014**: status `proposed → accepted`. Added a `Closed:` line with the closeout date and the version-bump target.
+  - **CMakeLists.txt**: `project(RemoteMicWindows VERSION 0.4.0)` → `0.5.0`.
+  - **`apps/windows/rc003/src/ovb_rc003/__init__.py`**: `__version__ "0.4.0-candidate"` → `"0.5.0-candidate"`.
+  - **`apps/windows/rc003/pyproject.toml`**: `version = "0.4.0"` → `"0.5.0"`.
+  - **`tests/bind/test_bind_smoke.py`**: `info.version == "0.4.0"` → `"0.5.0"` (mirrors the version-sync contract; the G3 binding smoke is the build-time assertion that all three lock-step).
+  - **CHANGELOG.md**: new `[0.5.0-candidate] — 2026-08-31` entry with the G1/G2/G3/G5 gate table (5/5 + 10/10 + 1/1 + 2/2 + 1/1 + 1/1 + 4/4 + 17/17 = 35/35 ctest Debug + 35/35 ctest Release; 4/4 verify_phase4_native_switch; 2/2 verify_phase4_audio_parity; 19/19 verify_phase3_production_routing regression), and a G6 row carrying the deferred status. Same shape as the Phase 3 closeout CHANGELOG row.
+  - **`installer/RemoteMicRC003Setup.iss`**: deliberately NOT bumped (Rule 1 — packaging stays phase 8).
+  - **`[Unreleased]`** reserved for Phase 5 (Windows input) + Phase 6 (BLE) per the original Phase 4/5/6 placeholder.
+
+### Gates after Phase 4 step 6 (this session)
+
+- `ctest -C Debug`: **35/35 PASS** (post-version-sync; `remotemic_bind_smoke` confirms `info.version == "0.5.0"`).
+- `ctest -C Release`: **35/35 PASS**.
+- `tools/verify_phase4_native_switch.py`: **4/4 conditions PASS** (unchanged from step 5; the version bump does not touch dispatch).
+- `tools/verify_phase4_audio_parity.py`: **2/2 PASS**.
+- `tools/verify_phase3_production_routing.py`: **19/19 PASS**.
+- `python -m ovb_rc003 --dry-run`: PASS (all ovb_rc003 modules including the new `_NativeAudioRoute` bridge wrapper + `audio_route_native` import successfully).
+
+### Phase 4 step 6 deferred / open
+
+- G6 real-device validation (RC003 + VB-Cable + Typeless per `docs/testing/PHASE4-REAL-ACCEPTANCE.md`) — procedure documented, awaits a human operator. Recording template in the CHANGELOG `[0.5.0-candidate]` entry's G6 row is intentionally blank; fill it after one real run, then mark G6 `passed` (or `failed` with `app.log` excerpt, per Rule 1 "do not auto-fix").
+- Carry-forward from Phase 3 (unchanged by Phase 4): Typeless step 1/2/3 from PHASE3-REAL-ACCEPTANCE.md, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch.
+- Qianwen Frida adapter: out of Phase 4 scope (per ADR-0014 §10 + user direction 2026-08-31 "先不管千问").
+
 ## Next
 
-1. On any new session: `git log --oneline -5` to find the latest Phase 4 commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
-2. Phase 4 has 1 step remaining: step 6 closeout (flip ADR-0014 to `Accepted` + version bump `0.4.0-candidate → 0.5.0-candidate` + record G6 observations from `docs/testing/PHASE4-REAL-ACCEPTANCE.md` into the CHANGELOG). Pick that up after G6 is exercised on real hardware.
-3. Do not start Phase 5 (Windows input) until Phase 4 reaches step 6 closeout.
-4. Carry-forward from Phase 3: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch — all unchanged. Phase 4 real-acceptance (G6) is Typeless + RC003 only per ADR-0014 §10.
+1. On any new session: `git log --oneline -5` to find the latest commit SHA, then read this file + `AI_HANDOVER.md` before doing anything.
+2. **Phase 4 closed.** Next phase: **Phase 5 (Windows input)** per `docs/architecture/cpp-migration-execution-plan.md` §3 rule 9. Phase 5 scope = Frida HID tap / hotkey physicalize / LLKHF_INJECTED / Qianwen adapter (already deferred structurally from Phase 3) — but Phase 4 closeout **does not authorize** auto-starting Phase 5; that's an executive call.
+3. G6 real-device validation (RC003 + VB-Cable + Typeless): when convenient, run `docs/testing/PHASE4-REAL-ACCEPTANCE.md` and paste the recording-template table back; update the CHANGELOG `[0.5.0-candidate]` G6 row from `deferred` to `passed` (or `failed` per Rule 1).
+4. Carry-forward from Phase 3: Typeless steps 1/2/3, Step 6 late-audio, Step 7b KeyboardInterrupt, Qianwen SHA mismatch — all unchanged.
+5. Uninstall/residue check + signing only with explicit user authorization.
+6. Do NOT bump `installer/RemoteMicRC003Setup.iss` `AppVersion` — that is phase 8 work per Rule 1.
 5. Uninstall/residue check + signing only with explicit user authorization.

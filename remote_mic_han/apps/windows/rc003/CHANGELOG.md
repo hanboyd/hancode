@@ -2,11 +2,237 @@
 
 ## [Unreleased]
 
-### Phase 4 / Phase 5 / Phase 6（C++ 迁移）
+### Phase 5 / Phase 6（C++ 迁移）
 
-（待开始。范围：Phase 4 音频、Phase 5 Windows 输入、Phase 6 BLE。
-Phase 3 已在 `0.4.0-candidate` 完成自动化门禁；真机 / Typeless /
+（待开始。范围：Phase 5 Windows 输入、Phase 6 BLE。
+Phase 4 已在 `0.5.0-candidate` 完成自动化门禁；真机 / Typeless /
 Qianwen 验收 deferred；本节保留作下一阶段入口。）
+
+---
+
+## [0.5.0-candidate] — 2026-08-31 — Phase 4 implementation complete (automated gates passed; real RC003 / Typeless acceptance deferred per ADR-0014 §10)
+
+**阶段状态：implementation complete；automated gates passed；real
+RC003 / Typeless acceptance deferred。** Phase 4 不视为
+完全关闭，直至真机 + Typeless 至少各跑过一次并观察（Qianwen
+Frida adapter work 明确不在 Phase 4 范围内）。
+
+**版本号说明**：按 `memory/cpp-migration-version-policy.md` Rule 2
+预先 bump `0.4.0-candidate → 0.5.0-candidate`，同步
+`CMakeLists.txt` 的 `project(VERSION ...)`、
+`apps/windows/rc003/src/ovb_rc003/__init__.py` 的 `__version__`、
+`apps/windows/rc003/pyproject.toml` 的 `version`、
+`tests/bind/test_bind_smoke.py` 的 `info.version`。
+`installer/RemoteMicRC003Setup.iss` 的 `AppVersion` 故意不动
+（per Rule 1 — packaging 留给 phase 8）。即使真机验收 deferred，
+版本号不回退，因为它跟踪的是 implementation+test 状态；后续若
+真机验收发现 regression，按既定策略处理：先修复 + 复测，再按
+`memory/cpp-migration-version-policy.md` Rule 1/2 决定是否需要
+patch bump，而不是预先设定。
+
+**范围**：9 阶段路线图第 4 阶段（C++/CPython 迁移第 6 区：
+有界 PCM 队列 + 20 ms 分块 + 16 kHz → 48 kHz 升采样 +
+WASAPI `IAudioRoute` 后端）。
+
+**状态对象 shipping 路径已接入工厂**（产品路径现在通过
+`make_audio_route()` 工厂 dispatch，对应
+`app.py` 的 `self._playback` 构造点（`RC003App._open_playback_for_new_session`）；
+默认 `python`，所以普通用户的体验与 Phase 3 完全一致；
+设置 `REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native` 时真实产品路径
+得到 `_NativeAudioRoute` 桥接包装（单 owner；`shadow` 禁止，
+per plan §3 rule 5 — WASAPI 是 side-effecting）。
+Phase 4 真实路由改动的门禁见下表 G5 行）。
+
+详见 [ADR-0014](../../docs/decisions/ADR-0014-phase4-audio-wasapi-cpp.md)
+第 1-10 节 + Phase 4 step 1-6 commits。
+
+### Phase 4 / Area — BoundedPcmQueue + 20 ms PcmChunker + Upsample16kTo48k + WASAPI IAudioRoute 后端（C++ 迁移）
+
+完成 Phase 4（ADR-0014）：把 Python 基线
+`ovb_rc003.audio_playback.EndpointPlaybackSink` 的
+"队列 + 分块 + 重采样 + 写设备 + 排空"职责迁移到 C++：
+
+- `remotemic::audio::BoundedPcmQueue<T>` —
+  mutex 保护的 drop-oldest 队列，构造期 `capacity_samples`
+  默认 = `2 * SOURCE_SAMPLE_RATE_HZ`（2 秒 @ 16 kHz = 32 000）；
+  满时丢最旧、`dropped_count_` 单调累加；不变量
+  `size() <= capacity_samples`。pybind11 binding 层
+  `py::call_guard<py::gil_scoped_release>` 释放 GIL。
+- `remotemic::audio::PcmChunker` —
+  20 ms 默认分块（@ 16 kHz = 320 samples），最后一帧
+  不够时 `flush_remaining_with_silence()` 用 `int16_t{0}`
+  补齐（与 Python `audio_playback.py` 的 `drain()` 静音
+  补帧对齐）。
+- `remotemic::audio::Upsample16kTo48k` —
+  纯函数 `upsample_16k_to_48k(span, previous, have_previous)`；
+  与 `audio_playback.py:154-172` 三阶线性插值**逐字节对齐**
+  （每源样本展开 `(prev + δ/3, prev + 2δ/3, current)`，
+  四舍五入 + clamp 到 `[-32768, 32767]`）。
+- `remotemic::audio::WasapiAudioRoute` —
+  Windows-only WASAPI 后端；`IAudioClient::IsFormatSupported`
+  检查 16/48 kHz；若设备首选 48 kHz，C++ 端自动升采样；
+  `AUDCLNT_SHAREMODE_SHARED` + 低延迟 + `AUTOCONVERTPCM` 关闭；
+  独立写线程 `std::jthread` 串 `pop_up_to → next_chunk →
+  upsample → IAudioClient::Write`；`stop()` 写完当前 chunk 后
+  退出；`close()` 释放设备句柄。`start()` 返回 false 表示
+  fail-closed。
+- `remotemic::audio::FakeAudioRoute` — 记录 `recorded_samples_` +
+  5 个 lifecycle counter（`started_count_` / `stopped_count_` /
+  `write_call_count_` / `dropped_count_` / `write_error_count_`）；
+  跨 OS 测试使用，**不**依赖 Windows。
+- `IAudioRoute` 接口扩展 — 新增 `drain(timeout)` + `close()`；
+  原 `stop()` 严格语义保留为"tell writer to exit"，**不**保留
+  双义 API。Phase 4 引入的全部 `IAudioRoute` 实现必须同步
+  更新签名。
+
+Python ↔ C++ 字节级一致（无容差）：
+
+- 8 个 Upsample16kTo48k 脚本（empty / single-no-previous /
+  single-with-previous / multi-with-carry / negative / int16
+  saturation / determinism / silence）
+- 10 个 FakeAudioRoute vs FakePlaybackSink 脚本（single write /
+  multiple writes / 20 ms chunk cadence / silence burst / alternating
+  sizes / write-before-start dropped / write-after-close dropped /
+  stop-idempotent / close-idempotent / loud signal）
+- 6 个 lifecycle counter / peak / RMS / drop-count / sample-count
+  / drain-order 对齐（6 dp）
+
+门禁（ADR-0014 §9，全部 5 个 area × Debug + Release + binding +
+shadow parity + native switch + production routing 同时满足）：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| G1 (C++) | `ctest -C Debug   -R '^(remotemic_bounded_pcm_queue_tests\|remotemic_pcm_chunker_tests\|remotemic_upsample_tests\|remotemic_fake_audio_route_tests\|remotemic_wasapi_audio_route_tests)\$'` | 5/5 通过 |
+| G1 (C++) | `ctest -C Release -R '^(remotemic_bounded_pcm_queue_tests\|remotemic_pcm_chunker_tests\|remotemic_upsample_tests\|remotemic_fake_audio_route_tests\|remotemic_wasapi_audio_route_tests)\$'` | 5/5 通过 |
+| G2 (Phase 2 + 3 全部不退化) | `ctest -C Debug   -R '^(remotemic_unit_tests\|remotemic_atvv_tests\|remotemic_atvv_control_tests\|remotemic_adpcm_ima_tests\|remotemic_adpcm_dc_tests\|remotemic_adpcm_postprocess_tests\|remotemic_adpcm_frame_tests\|remotemic_voice_controller_tests\|remotemic_edge_debouncer_tests\|remotemic_session_tests)\$'` | 10/10 通过 |
+| G2 (Phase 2 + 3 全部不退化) | `ctest -C Release -R '^(remotemic_unit_tests\|remotemic_atvv_tests\|remotemic_atvv_control_tests\|remotemic_adpcm_ima_tests\|remotemic_adpcm_dc_tests\|remotemic_adpcm_postprocess_tests\|remotemic_adpcm_frame_tests\|remotemic_voice_controller_tests\|remotemic_edge_debouncer_tests\|remotemic_session_tests)\$'` | 10/10 通过 |
+| G3 (binding smoke) | `ctest -C Debug   -R '^remotemic_audio_route_bind_smoke\$'` | 1/1 通过（10/10 子测试） |
+| G3 (binding smoke) | `ctest -C Release -R '^remotemic_audio_route_bind_smoke\$'` | 1/1 通过 |
+| G3 (byte-exact parity) | `ctest -C Debug   -R '^(remotemic_upsample_parity\|remotemic_audio_route_parity)\$'` | 2/2 通过（8/8 + 10/10） |
+| G3 (byte-exact parity) | `ctest -C Release -R '^(remotemic_upsample_parity\|remotemic_audio_route_parity)\$'` | 2/2 通过 |
+| G3 (version sync) | `ctest -C Debug   -R '^remotemic_bind_smoke\$'` | 1/1 通过（`info.version == "0.5.0"`） |
+| G3 (version sync) | `ctest -C Release -R '^remotemic_bind_smoke\$'` | 1/1 通过 |
+| G5 (shadow parity helper) | `python tools/verify_phase4_audio_parity.py` | 2/2 通过 |
+| G5 (native switch + fake backend) | `ctest -C Debug   -R '^remotemic_phase4_native_switch\$'` | 1/1 通过（9/9；1 skipped：本地无 `_C.pyd`） |
+| G5 (native switch + fake backend) | `ctest -C Release -R '^remotemic_phase4_native_switch\$'` | 同上 |
+| G5 (production routing closeout) | `python tools/verify_phase4_native_switch.py` | 4/4 条件全部 PASS（默认 = python / 单 env → native shim / 恢复 → python / 无双 owner） |
+| G5 (production routing closeout) | `ctest -C Debug   -R '^remotemic_phase4_production_routing\$'` | 4/4 通过 |
+| G7 (Phase 3 production routing regression) | `ctest -C Debug   -R '^remotemic_phase3_production_routing\$'` | 17/17 通过（audio_route entry 不影响 voice/edge_debouncer/atvv_session） |
+| G7 (Phase 3 production routing regression) | `python tools/verify_phase3_production_routing.py` | 19/19 PASS |
+| 总计 | `ctest -C Debug` | 35/35 通过 |
+| 总计 | `ctest -C Release` | 35/35 通过 |
+
+新增内容：
+
+- `include/remotemic/audio/bounded_pcm_queue.hpp` / `src/audio/bounded_pcm_queue.cpp`
+  — `remotemic::audio::BoundedPcmQueue<T>` drop-oldest 模板（`T`
+  限定 `std::int16_t`）；构造期 `capacity_samples` 默认 = 2 秒
+  @ 16 kHz，越界抛 `std::invalid_argument`；所有 public 方法在
+  mutex 下。
+- `include/remotemic/audio/pcm_chunker.hpp` / `src/audio/pcm_chunker.cpp`
+  — `remotemic::audio::PcmChunker` 20 ms 默认分块；`next_chunk`
+  追加累积，够 `chunk_duration` 返回完整块，残余保留；
+  `flush_remaining_with_silence()` 用 `int16_t{0}` 补到下一个
+  `chunk_duration` 边界。
+- `include/remotemic/audio/upsample_16k_to_48k.hpp` /
+  `src/audio/upsample_16k_to_48k.cpp` — 三阶线性插值纯函数；
+  与 `audio_playback.py:154-172` 字节级对齐。
+- `include/remotemic/audio/wasapi_audio_route.hpp` /
+  `src/audio/wasapi_audio_route.cpp` — WASAPI 后端；
+  `IAudioClient::IsFormatSupported` 检测 + 48 kHz 自动升采样 +
+  独立写线程 + atomic stop flag + drop-oldest 队列 + jthread
+  writer pulling via PcmChunker+Upsample。
+- `include/remotemic/audio/fake_audio_route.hpp` /
+  `src/audio/fake_audio_route.cpp` — 跨 OS 测试 recording double
+  (`FakeAudioRoute`)，记录 samples + 5 个 lifecycle counter +
+  peak + RMS。
+- `include/remotemic/interfaces/audio_route.hpp` — 扩展接口
+  `drain(timeout)` + `close()`；原 `stop()` 严格语义。
+- `src/bind/bind_module.cpp` — 暴露 `PcmFormat` (POD 值类型) +
+  `IAudioRoute` (trampoline base) + `WasapiAudioRoute` +
+  `FakeAudioRoute` + `upsample_16k_to_48k` (test-only via `_C`) +
+  `UpsampleState` (test-only via `_C`) + `FakeAudioRoute` introspection
+  (`recorded_samples_list` / `peak` / `rms`)。
+- `apps/windows/rc003/src/ovb_rc003/audio_route_native.py` —
+  `make_audio_route(endpoint_name, host_api_name)` 工厂 + `_NativeAudioRoute`
+  桥接 shim；`shadow` 禁止 per plan §3 rule 5。
+- `apps/windows/rc003/src/remotemic_native/__init__.py` —
+  `PcmFormat` + `WasapiAudioRoute` 公开 re-export（ADR-0011
+  single-import-surface）。
+- `apps/windows/rc003/tests/fakes/audio_route_fakes.py` (NEW) —
+  `FakePlaybackSink` Python recording double（**不**入生产代码）；
+  与 `FakeAudioRoute` 1:1 对齐。
+- `tests/unit/test_bounded_pcm_queue.cpp` — drop-oldest 边界 +
+  累积 + 线程安全 + 越界参数。
+- `tests/unit/test_pcm_chunker.cpp` — 20 ms 块边界 +
+  silence-padded + 残余 flush。
+- `tests/unit/test_upsample_16k_to_48k.cpp` — 8 个脚本 byte-exact
+  对齐 Python `audio_playback.py:154-172`。
+- `tests/unit/test_fake_audio_route.cpp` — lifecycle counter +
+  drop-oldest + recorded_samples 序列。
+- `tests/unit/test_wasapi_audio_route.cpp` — Windows-only，
+  Linux/macOS CI 用 `FakeAudioRoute` 替代。
+- `tests/bind/test_audio_route_bind_smoke.py` — pybind11 binding
+  smoke（G3）。
+- `tests/bind/test_upsample_16k_to_48k_parity.py` (NEW) — 8 个
+  byte-exact parity 脚本（G3）。
+- `apps/windows/rc003/tests/test_audio_route_native_parity.py` (NEW) —
+  10 个场景 + 2 个 sanity，driver identical scripts through
+  both recording doubles；6 项对齐（sample-count / peak / RMS /
+  drop-count / drain-order / lifecycle counter）。
+- `apps/windows/rc003/tests/test_phase4_audio_route_native_switch.py`
+  (NEW) — 9 个测试（DefaultDispatch / NativeDispatch /
+  RestoreAfterUnset / SingleOwner）；env-leak safety via
+  snapshot+restore `_EnvCase`（5ce9bd5 corrective pattern）。
+- `apps/windows/rc003/tests/test_phase4_audio_route_production_routing.py`
+  (NEW) — 4 个 source-level 测试；defense in depth against a
+  future commit re-introducing a direct `EndpointPlaybackSink(...)`
+  reference in `app.py`。
+- `tools/verify_phase4_audio_parity.py` (NEW) — 2 个 parity gate
+  接受证。
+- `tools/verify_phase4_native_switch.py` (NEW) — 4-condition
+  acceptance proof，镜像 `verify_phase3_production_routing.py`
+  pattern。
+- `tools/run_parity_test.py` (REWRITTEN) — 之前的 wrapper 重复
+  `-m -` argv；argparse 拒绝重复；ctest 把 exit 2 当 Passed
+  报告（Phase 3 parity 被掩盖）。新 wrapper in-process 解析，
+  strip leading `-m unittest`，programmatic `unittest.main` +
+  `TestLoader.discover`（`-s/-t/-p` 触发），直接 `sys.path`
+  修改。**同时修复 Phase 3 + Phase 4 parity。**
+- `docs/testing/PHASE4-REAL-ACCEPTANCE.md` (NEW) — G6 手动
+  验收程序（RC003 + VB-Cable + Typeless / Qianwen），映射
+  每个 audio lifecycle event 到 log-line + Typeless / Qianwen
+  行为检查 + restore-to-default + recording template。
+- `CMakeLists.txt` — `remotemic_audio` 库（5 个 .cpp）加入构建；
+  5 个 ctest 单元测试目标；5 个 G3 binding smoke 目标；
+  4 个 G3 byte-exact parity 目标；2 个 G5 native switch +
+  production routing 目标；`_REMOTEMIC_PARITY_HELPER` /
+  `_REMOTEMIC_PARITY_ENV` 定义上移到所有 `add_test()` 之前
+  （之前 Phase 4 step 4 add_test 触发时未定义）。
+
+未跑 / 留待（Phase 4 closeout 之后下一步）：
+
+- G6（真机 + Typeless 完整链路 per `docs/testing/PHASE4-REAL-ACCEPTANCE.md`）
+  — 当前环境无 RC003 + Typeless + 软件 VB-Cable 同时具备；本次
+  会话仅完成 ADR-0014 §10 列出的"自动化 + 文档"两半门禁，真机
+  端到端观察 deferred 至下一次有硬件的会话。
+- G6 配套：Qianwen Frida adapter work 明确 NOT in Phase 4 scope
+  （per ADR-0014 §10 + user direction "先不管千问，这个有点复杂"）；
+  结构性问题与 Phase 3 同源（已 deferred，见 `[0.4.0-candidate]`
+  CHANGELOG entry）。
+- G4（PyInstaller frozen `--dry-run` / Inno Setup installer / 便携
+  ZIP / 签名发布）— 在 Phase 4 closeout commit 完成 + 版本号
+  bump 到 `0.5.0-candidate` 之后，按 `cpp-migration-version-policy.md`
+  Rule 1 单独安排。
+
+ADR-0014 状态：本次提交把状态从 `proposed` → `accepted`，与
+Phase 3 step 6 closeout（commit `11f58bd`）相同的"All G1/G2/G3/G5
+green; G6 deferred; version bump 0.4.0 → 0.5.0" 节奏。
+
+行为变化：**无**。默认实现仍是 Python（`audio_playback.EndpointPlaybackSink`）；
+只有 `REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=native` 显式选择才会调用
+C++ 路径。**`shadow` 不允许**（plan §3 rule 5：WASAPI 是 side-effecting
+设备句柄）。
 
 ---
 
