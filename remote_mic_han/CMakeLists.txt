@@ -654,6 +654,73 @@ if(REMOTEMIC_BUILD_TESTS)
             "REMOTEMIC_SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/src"
         )
 
+        # Phase 4 / ADR-0014 §6 / step 4: upsample byte-exact parity
+        # (G3). Python 3-tap linear interpolation
+        # (audio_playback.py:154-172) vs C++ Upsample16kTo48k exposed
+        # via remotemic_native._C.upsample_16k_to_48k. Covers empty /
+        # single-sample / multi-sample / carry-over state so steady-
+        # state BLE notification cadence is parity-checked, not just
+        # the first chunk. Per ADR-0014 §6 step 4:
+        # "upsample_16k_to_48k_native_matches_python_byte_exact".
+        add_test(
+            NAME remotemic_upsample_parity
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_upsample_16k_to_48k_parity.py"
+                -v
+        )
+        set_tests_properties(remotemic_upsample_parity PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
+        # Phase 4 / ADR-0014 §6 / step 4: audio route parity (G3).
+        # Python FakePlaybackSink (apps/windows/rc003/tests/fakes/audio_route_fakes.py)
+        # vs C++ FakeAudioRoute (remotemic_native._C.FakeAudioRoute).
+        # Drives identical scripts through both recording doubles and
+        # asserts sample-by-sample equality + lifecycle counter parity
+        # + peak + RMS parity. Per ADR-0014 §6 step 4:
+        # "sample-count / peak / RMS / drop-count / drain-order 与
+        # Python baseline 对齐". This is build-time parity proof only;
+        # real-device G6 validation (Typeless + RC003) is step 5/6.
+        # Env-leak safety: REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE=shadow
+        # is set inside setUpClass with tearDown restore (5ce9bd5
+        # corrective pattern).
+        add_test(
+            NAME remotemic_audio_route_parity
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_audio_route_native_parity.py"
+                -v
+        )
+        set_tests_properties(remotemic_audio_route_parity PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
+        # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
+        # (G5). Each runs identical scripts through both the python
+        # baseline and the C++ binding (via the bridge wrappers) and
+        # asserts byte-exact equality. Env-leak safety: the env
+        # override lives inside setUpClass with proper teardown
+        # restore, matching the corrective fix pattern from
+        # commit 5ce9bd5.
+        # Helper script that bootstraps PYTHONPATH with both the build dir
+        # (containing the compiled remotemic_native package) and the
+        # source dir (containing ovb_rc003) before invoking unittest.
+        # CMake's ENVIRONMENT property treats ``;`` as a list
+        # separator and silently drops subsequent entries; this
+        # wrapper sidesteps that by setting sys.path inside Python.
+        set(_REMOTEMIC_PARITY_HELPER
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/run_parity_test.py"
+        )
+        set(_REMOTEMIC_PARITY_ENV
+            "REMOTEMIC_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+            "REMOTEMIC_SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/src"
+        )
+
         add_test(
             NAME remotemic_voice_controller_native_parity
             COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}

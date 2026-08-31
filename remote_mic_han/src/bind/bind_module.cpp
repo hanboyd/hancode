@@ -18,6 +18,7 @@
 #include "remotemic/interfaces/audio_route.hpp"
 #include "remotemic/audio/wasapi_audio_route.hpp"
 #include "remotemic/audio/fake_audio_route.hpp"
+#include "remotemic/audio/upsample_16k_to_48k.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -746,6 +747,32 @@ PYBIND11_MODULE(_C, m) {
         .def("recorded_samples",
              &audio::FakeAudioRoute::recorded_samples,
              "Number of int16 samples written since start().")
+        .def("recorded_samples_list",
+             [](const audio::FakeAudioRoute& self) {
+                 std::vector<std::int16_t> copy = self.recorded_snapshot();
+                 std::vector<std::int32_t> out;
+                 out.reserve(copy.size());
+                 for (auto s : copy) {
+                     out.push_back(static_cast<std::int32_t>(s));
+                 }
+                 return out;
+             },
+             "Snapshot of all int16 samples recorded since start(),\n"
+             "as a Python list of int. Used by the parity harness to\n"
+             "compare against the python FakePlaybackSink's\n"
+             "recorded_samples_list byte-for-byte.")
+        .def("peak",
+             [](const audio::FakeAudioRoute& self) {
+                 return self.peak_abs();
+             },
+             "Peak absolute value across all recorded samples.\n"
+             "Returns 0 if the buffer is empty.")
+        .def("rms",
+             [](const audio::FakeAudioRoute& self) {
+                 return self.rms_value();
+             },
+             "Root-mean-square of all recorded samples as a float.\n"
+             "Returns 0.0 if the buffer is empty.")
         .def("write_call_count",
              &audio::FakeAudioRoute::write_call_count,
              "Monotonic counter of write() invocations.")
@@ -765,4 +792,57 @@ PYBIND11_MODULE(_C, m) {
         .def("last_format",
              &audio::FakeAudioRoute::last_format,
              "The PcmFormat from the most recent start().");
+
+    // ------------------------------------------------------------------
+    // 12. Upsample16kTo48k (Phase 4 / ADR-0014 §3.3 step 4)
+    //
+    // The 3-tap linear interpolation is a pure function whose
+    // byte-exact equivalence with audio_playback.py:154-172 is the
+    // G3 upsample parity requirement (ADR-0014 §6 step 4). Both
+    // python and native sides are driven from the parity test with
+    // identical input sequences and asserted byte-equal.
+    //
+    // UpsampleState is a small POD struct holding the carry-over
+    // previous_sample + have_previous flag. The python side stores
+    // the same state as attributes on a thin wrapper class so
+    // scenarios that span multiple writes can be parity-tested.
+    // ------------------------------------------------------------------
+    py::class_<audio::UpsampleState>(
+        m, "UpsampleState")
+        .def(py::init<>(),
+             "Default-constructed state: no previous sample yet;\n"
+             "the first source[0] will produce (s0, s0, s0).")
+        .def_readwrite("previous_sample",
+                       &audio::UpsampleState::previous_sample)
+        .def_readwrite("have_previous",
+                       &audio::UpsampleState::have_previous);
+
+    m.def("upsample_16k_to_48k",
+          [](std::vector<std::int32_t> source,
+             audio::UpsampleState& state) {
+              std::vector<std::int16_t> in;
+              in.reserve(source.size());
+              for (auto v : source) {
+                  if (v > 32767) v = 32767;
+                  if (v < -32768) v = -32768;
+                  in.push_back(static_cast<std::int16_t>(v));
+              }
+              std::vector<std::int16_t> out =
+                  audio::upsample_16k_to_48k(
+                      std::span<const std::int16_t>(in), state);
+              std::vector<std::int32_t> py_out;
+              py_out.reserve(out.size());
+              for (auto s : out) {
+                  py_out.push_back(static_cast<std::int32_t>(s));
+              }
+              return py_out;
+          },
+          py::arg("source"),
+          py::arg("state"),
+          "Three-tap linear interpolation: every source sample\n"
+          "expands to (prev + round(delta/3), prev + round(2*delta/3),\n"
+          "current), rounded to nearest int16 and clamped. The\n"
+          "UpsampleState is mutated in place to track the carry-over\n"
+          "previous sample so consecutive calls compose the same way\n"
+          "the python baseline does across BLE notifications.");
 }

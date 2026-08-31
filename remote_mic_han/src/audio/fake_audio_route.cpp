@@ -13,6 +13,7 @@
 #include "remotemic/audio/fake_audio_route.hpp"
 
 #include <chrono>
+#include <cmath>
 
 namespace remotemic::audio {
 
@@ -63,6 +64,46 @@ void FakeAudioRoute::close() noexcept {
 std::size_t FakeAudioRoute::recorded_samples() const noexcept {
     std::lock_guard<std::mutex> lk(m_);
     return recorded_.size();
+}
+
+std::vector<std::int16_t> FakeAudioRoute::recorded_snapshot() const noexcept {
+    std::lock_guard<std::mutex> lk(m_);
+    return recorded_;
+}
+
+std::int32_t FakeAudioRoute::peak_abs() const noexcept {
+    std::lock_guard<std::mutex> lk(m_);
+    if (recorded_.empty()) {
+        return 0;
+    }
+    std::int32_t peak = 0;
+    for (auto s : recorded_) {
+        std::int32_t mag = s < 0
+            ? -static_cast<std::int32_t>(s)
+            : static_cast<std::int32_t>(s);
+        if (mag > peak) {
+            peak = mag;
+        }
+    }
+    return peak;
+}
+
+double FakeAudioRoute::rms_value() const noexcept {
+    std::lock_guard<std::mutex> lk(m_);
+    if (recorded_.empty()) {
+        return 0.0;
+    }
+    // int16 squared fits in int32 only for |s| <= 181 (32768/181 = 181);
+    // we accumulate in int64 to avoid overflow across the full int16
+    // range. The fake's recorded buffer is a test fixture so the cost
+    // is irrelevant; this stays correct for any int16 input.
+    std::int64_t acc = 0;
+    for (auto s : recorded_) {
+        acc += static_cast<std::int64_t>(s) *
+               static_cast<std::int64_t>(s);
+    }
+    return std::sqrt(static_cast<double>(acc) /
+                     static_cast<double>(recorded_.size()));
 }
 
 std::uint64_t FakeAudioRoute::write_call_count() const noexcept {

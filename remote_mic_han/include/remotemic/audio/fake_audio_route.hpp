@@ -29,6 +29,9 @@ public:
 
     // Test introspection. All read under mutex_.
     std::size_t recorded_samples() const noexcept;
+    std::vector<std::int16_t> recorded_snapshot() const noexcept;
+    std::int32_t peak_abs() const noexcept;
+    double rms_value() const noexcept;
     std::uint64_t write_call_count() const noexcept;
     std::uint64_t started_count() const noexcept;
     std::uint64_t stopped_count() const noexcept;
