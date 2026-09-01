@@ -1,9 +1,9 @@
 # Current Status
 
-- `last_updated`: 2026-08-31T22:27:00+08:00
-- `updated_by`: hermes-agent
-- `git_commit_sha`: bab62b5
-- `current_phase`: **Phase 5 step 2 sub-pass B complete (real Win32 adapters).** 4 stubs replaced: LowLevelKeyboardHook (WH_KEYBOARD_LL + SPSC ring + 5 us budget), RawInputSource (RIDEV_INPUTSINK + RC003 VID/PID filter + RIM_TYPEKEYBOARD/HID decoding), SendInputActionSink (bounded queue + worker thread + physical scan-code path + system action dispatch), FridaHidTapSource (loopback TCP + JSON gatt_read parser + usage ID decode). All 4 have `#ifdef _WIN32` / `#else` fail-closed stubs. 21/21 ctest Debug + 21/21 ctest Release. /W4 clean. Zero behavior change (production still uses python baseline). Phase 5 has 1 step remaining: step 3 (native switch + production routing closeout + G6 real-device validation per ADR-0015 §9 + version bump 0.5.0-candidate → 0.6.0-candidate).
+- `last_updated`: 2026-09-01T18:00:00+08:00
+- `updated_by`: sonnet
+- `git_commit_sha`: 0d394ea (Phase 5 step 3 source closeout) + pending docs refresh
+- `current_phase`: **Phase 5 step 3 closeout landed + native-input gaps (items 1+2) verified closed.** Step 3 source code (bind_module.cpp section 13 + 2 bridge wrappers + recording doubles + production routing + test_input_bind_smoke.py) committed at `0d394ea`. Items 1+2 verified in this session against fresh Debug `_C.pyd`: HotkeyPhysicalizer 19/19 C++ tests PASS (incl. 4 release_held tests); IInputSource 4/4 PASS (windows_stubs_now_real); IHostActionSink 6/6 PASS (send_input_starts_on_windows); test_input_bind_smoke 17/17 PASS (incl. set_event_sink dispatch + release_sink drops + HotkeyPhysicalizer release_held + ActionResolver). All 4 verify scripts green (Phase 3 G7 19/19; Phase 4 native switch 4/4; Phase 4 audio parity 2/2; Phase 5 native switch 4/4). Phase 5 ready for Phase 6 entry per `cpp-migration-execution-plan.md` §6; user must authorize Phase 6 start explicitly.
 - `hardware_available`: true
 
 ## Completed
@@ -339,20 +339,20 @@ Per ADR-0015 §10 step 3: native switch + production routing closeout + G6 real-
 - **Qianwen acceptance: deferred (structural, NOT Phase 5 in scope)** — bridge's RAlt path is correct, but the user's installed `QianwenIMEUiClient.exe` SHA-256 does not match `qianwen_physicalizer.py:28`'s locked SHA-256; adapter fails closed at `qianwen_physicalizer.py:191-193`. Unblocking requires re-discovering the new build's callback RVA + re-locking the SHA + Frida-session verification matrix.
 - Carry-forward from Phase 3 / Phase 4 (unchanged by Phase 5): Step 6 late-audio guard, Step 7b KeyboardInterrupt.
 - Back / volume+ / volume- "deferred" status (Phase 3 / Phase 4 carry-forward): unchanged — actual reachability via Frida tap still pending G6 real-device validation on real RC003 hardware. Elevated WUDFHost injection + direct HID-over-GATT access remain denied by Windows.
-- **`IInputSource::set_event_sink` native binding: deferred** — C function pointer + void* signature (`SinkFn`) cannot be directly marshaled by pybind11; bridge shim uses `hasattr` defensive fallback + stores the callable on the python side. **Phase 5 does NOT claim native-side event delivery wiring is implemented.** Phase 7 Application coordinator will own source + sink lifetime and add proper callback marshaling.
-- **`HotkeyPhysicalizer::release_held()`: deferred, still a no-op** (held_keys_ is empty after a successful tap). **Phase 5 does NOT claim release_held() is implemented;** it's a safety-net best-effort cleanup hook that Phase 7 will wire to `SendInputActionSink`'s release surface.
+- **`IInputSource::set_event_sink` native binding: CLOSED in this session.** `bind_module.cpp:54-220` implements per-source `SinkHolder` (mutex + py::object + atomic armed) + `input_source_sink_trampoline` (C trampoline taking GIL on pump thread, NOT the WH_KEYBOARD_LL callback path) + process-wide `g_input_source_sink_registry` + atexit drain handler. Python `_NativeInputSource.set_event_sink` reaches the binding directly. Verified by `test_input_bind_smoke.py` (5 tests: test_fake_input_source_set_event_sink_dispatches_event, test_set_event_sink_none_clears_previous_sink, test_set_event_sink_replaces_previous_sink, test_sink_exception_is_swallowed, test_release_sink_drops_callable) — all PASS against fresh Debug `_C.pyd`.
+- **`HotkeyPhysicalizer::release_held()`: CLOSED in this session.** `hotkey_physicalizer.cpp:374-385` iterates `held_keys_` and emits inverse up events through the bound sink; idempotent (clears held_keys_ at end). Verified by 4 C++ tests in `test_hotkey_physicalizer.cpp` (release_held_after_successful_tap_is_no_op, release_held_emits_inverse_for_dangling_key, release_held_emits_inverse_after_mid_stream_failure, release_held_after_submit_up_failure_keeps_dangler) + 1 Python test `test_hotkey_physicalizer_release_held_is_noop_after_tap` in `test_input_bind_smoke.py` — all PASS.
 
-## Phase 5 status: implementation complete; automated gates passed; real acceptance and remaining native-input gaps deferred
+## Phase 5 status: fully shipped; native-input gaps closed; real acceptance deferred (G6 only)
 
-Phase 5 (Windows input + host action sink) implementation is complete on the C++ side (interfaces + recording doubles + pure-logic + 4 real Win32 adapters + pybind11 binding seam) and on the Python bridge side (two module-level switch factories with defensive fallbacks). Automated gates all green (43/43 ctest Debug + 43/43 ctest Release; G3 version sync `info.version == "0.6.0"`; G5 native switch 13 子测试 PASS; G5 production routing closeout 4/4 + 3/3; G7 Phase 3 / Phase 4 regressions all PASS).
+Phase 5 (Windows input + host action sink) implementation is complete on the C++ side (interfaces + recording doubles + pure-logic + 4 real Win32 adapters + pybind11 binding seam + set_event_sink trampoline + release_held safety net) and on the Python bridge side (two module-level switch factories with defensive fallbacks). Automated gates all green (43/43 ctest Debug + 43/43 ctest Release; G3 version sync `info.version == "0.6.0"`; G5 native switch 13 子测试 PASS; G5 production routing closeout 4/4 + 3/3; G7 Phase 3 / Phase 4 regressions all PASS; Phase 5 native-input gap verification 17/17 test_input_bind_smoke PASS + 19/19 HotkeyPhysicalizer PASS).
 
 **Phase 5 does NOT claim any of the following are complete** (these remain deferred — explicit list per user direction at commit time):
 
-1. `IInputSource::set_event_sink` native binding (SinkFn callback marshaling at the pybind11 seam).
-2. `HotkeyPhysicalizer::release_held()` (still a no-op; release path not wired to SendInputActionSink).
+1. ~~`IInputSource::set_event_sink` native binding (SinkFn callback marshaling at the pybind11 seam).~~ **CLOSED 2026-09-01** — verified by test_input_bind_smoke 5 tests + IInputSource contract test `windows_stubs_now_real`.
+2. ~~`HotkeyPhysicalizer::release_held()` (still a no-op; release path not wired to SendInputActionSink).~~ **CLOSED 2026-09-01** — verified by 4 HotkeyPhysicalizer C++ tests + test_input_bind_smoke `test_hotkey_physicalizer_release_held_is_noop_after_tap`.
 3. RC003 real-device acceptance (per `PHASE3-REAL-ACCEPTANCE.md` / `PHASE4-REAL-ACCEPTANCE.md`).
 4. Notepad acceptance (Notepad focus + chord input, part of Typeless step 4 matrix).
 5. Typeless acceptance (PARTIAL — step 4 only; steps 1/2/3 not exercised on native path).
 6. Qianwen acceptance (structural SHA-256 mismatch, NOT Phase 5 in scope).
 
-Phase 6 (BLE / WinRT) is the next entry per `cpp-migration-execution-plan.md` §6; user direction: do NOT auto-start Phase 6 before deciding whether items 1 + 2 above must be closed in Phase 5 first.
+Phase 6 (BLE / WinRT) is the next entry per `cpp-migration-execution-plan.md` §6. Native-input gaps no longer block entry; remaining Phase 5 deferrals are G6 real-device acceptance only.
