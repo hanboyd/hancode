@@ -37,10 +37,17 @@ public:
     // (returns false). Mirrors "send_input_error_count" expectations.
     void set_submit_fails_for_test(bool fails) noexcept;
 
+    // Test-only helper: configure the sink to start failing once the
+    // submitted_count has reached ``threshold``. Use 0 (default) for
+    // no threshold-based failing. Lets release_held tests simulate a
+    // sink that succeeds for the first N submits then drops mid-stream.
+    void set_fail_after_count_for_test(std::uint64_t threshold) noexcept;
+
 private:
     std::uint64_t submitted_count_{0};
     std::uint64_t submit_error_count_{0};
     bool submit_fails_{false};
+    std::uint64_t fail_after_count_{0};  // 0 = never
     mutable std::mutex mu_;
     std::deque<KeyEntry> keys_;
     std::deque<SysEntry> sys_;

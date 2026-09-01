@@ -132,7 +132,9 @@ class _NativeInputSource:
 
     Native semantics map 1:1 onto the C++ IInputSource:
 
-      * set_event_sink(callable) -> RawInputSource.set_event_sink
+      * set_event_sink(callable) -> IInputSource.set_event_sink (binding
+        seam marshals the Python callable into the C function-pointer +
+        void* contract via a per-source registry + GIL-safe trampoline)
       * start()                  -> RawInputSource.start (Windows-only)
       * stop()                   -> RawInputSource.stop
       * event_count()            -> RawInputSource.event_count
@@ -143,11 +145,9 @@ class _NativeInputSource:
     ``bind_module.cpp`` section 13). On a Linux/macOS build the symbol
     is absent; we fall back to the python shim so the bridge wrapper
     stays implementation-agnostic across all platforms. ``set_event_sink``
-    is similarly defensive: ``IInputSource::set_event_sink`` takes a
-    C-style function pointer + void* (per ADR-0015 §3.2) which pybind11
-    cannot directly marshal; Phase 7 Application coordinator will own
-    the source + sink lifetime and add proper callback marshaling.
-    Until then the shim stores the callable on the python side.
+    is now fully wired through the binding's trampoline; the
+    python-side ``_sink`` field remains so the bridge wrapper has a
+    single source of truth for the callable.
     """
 
     def __init__(self, device_path: Optional[str] = None) -> None:
@@ -156,6 +156,10 @@ class _NativeInputSource:
         self._is_native = False
         self._device_path = device_path
         self._sink: Optional[Callable[[object], None]] = None
+        # Captured diagnostic for set_event_sink failures; the bridge
+        # wrapper can inspect this and decide whether to fall back to
+        # the python surface.
+        self._registration_error: Optional[BaseException] = None
 
         # Three graceful fallbacks before falling through to python:
         # 1. binding absent (no _C.pyd on PYTHONPATH)            -> python
@@ -172,25 +176,62 @@ class _NativeInputSource:
         self._impl = raw_input_cls()
         self._is_native = True
 
+    def __del__(self) -> None:  # pragma: no cover - GC timing dependent
+        # Best-effort cleanup: drop the registered sink on the native
+        # side so the pump thread can short-circuit. NativeImpl holds a
+        # reference to the python callable only as long as the binding's
+        # registry keeps it; releasing here lets the callable be
+        # collected promptly when the wrapper goes out of scope.
+        try:
+            self.stop()
+        except Exception:  # pragma: no cover - defensive during GC
+            pass
+
     def set_event_sink(
         self, sink: Callable[[object], None]
     ) -> None:
-        # Always store on the python side so the bridge wrapper can
-        # invoke the callable regardless of which ``_impl`` is in play.
-        # The native ``_impl.set_event_sink`` is intentionally NOT bound
-        # (the C++ sink signature is a function pointer + void* which
-        # pybind11 cannot directly marshal; Phase 7 will add proper
-        # callback marshaling at the IInputSource boundary).
+        # Store on the python side so the bridge wrapper has a single
+        # source of truth. The binding's IInputSource.set_event_sink
+        # now marshals the Python callable into the C function-pointer
+        # + void* contract via a per-source registry + GIL-safe
+        # trampoline (see bind_module.cpp section 13.4). The trampoline
+        # is invoked from the source's pump thread, NOT the
+        # WH_KEYBOARD_LL hook callback path, so the 5 us budget per
+        # ADR-0015 §3.6 is preserved.
+        #
+        # Diagnostics: native registration failures are NO LONGER
+        # silently swallowed. If the binding side rejects the callable
+        # (older artifact, missing __release_sink__, etc.), we log at
+        # WARNING so a post-mortem can identify why the native side
+        # never delivered the event. The python-side _sink remains
+        # authoritative so the bridge can observe the registration
+        # attempt for tests; the bridge wrapper calls stop() at the
+        # end of the session to clear any sink the binding accepted.
         self._sink = sink
         set_fn = getattr(self._impl, "set_event_sink", None)
         if callable(set_fn):
             try:
                 set_fn(sink)
-            except Exception:
-                # Some IInputSource impls may accept set_event_sink
-                # but fail mid-flight; the python-side _sink remains
-                # the source of truth for the bridge wrapper.
-                pass
+            except (TypeError, ValueError, RuntimeError) as exc:
+                _logger.warning(
+                    "native input source rejected set_event_sink: %s",
+                    exc,
+                )
+                self._registration_error = exc
+            except Exception as exc:  # pragma: no cover - defensive
+                _logger.exception(
+                    "native input source set_event_sink raised unexpected error",
+                )
+                self._registration_error = exc
+        else:
+            _logger.warning(
+                "native input source has no set_event_sink binding; "
+                "the python-side _sink will not be invoked on the "
+                "native pump thread."
+            )
+            self._registration_error = RuntimeError(
+                "native input source binding missing set_event_sink"
+            )
 
     def start(self, device_path: Optional[str] = None) -> bool:
         # RawInputSource.start() does not take a device path; the C++
@@ -200,12 +241,36 @@ class _NativeInputSource:
         start_fn = getattr(self._impl, "start", None)
         if not callable(start_fn):
             return False
-        return bool(start_fn())
+        try:
+            return bool(start_fn())
+        except (TypeError, ValueError, RuntimeError) as exc:
+            _logger.warning(
+                "native input source start failed: %s", exc,
+            )
+            return False
 
     def stop(self) -> None:
+        # Drop any registered sink on the native side BEFORE stopping
+        # the source, so the pump thread sees user_data=nullptr and
+        # short-circuits. Without this, the python callable could be
+        # invoked once more from the pump thread after stop() returned.
+        release_fn = getattr(self._impl, "__release_sink__", None)
+        if callable(release_fn):
+            try:
+                release_fn()
+            except (TypeError, ValueError, RuntimeError) as exc:
+                _logger.warning(
+                    "native input source __release_sink__ failed: %s",
+                    exc,
+                )
         stop_fn = getattr(self._impl, "stop", None)
         if callable(stop_fn):
-            stop_fn()
+            try:
+                stop_fn()
+            except (TypeError, ValueError, RuntimeError) as exc:
+                _logger.warning(
+                    "native input source stop failed: %s", exc,
+                )
 
     def event_count(self) -> int:
         count_fn = getattr(self._impl, "event_count", None)
@@ -213,7 +278,7 @@ class _NativeInputSource:
             return 0
         try:
             return int(count_fn())
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             return 0
 
     def dropped_count(self) -> int:
@@ -222,7 +287,7 @@ class _NativeInputSource:
             return 0
         try:
             return int(count_fn())
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             return 0
 
 

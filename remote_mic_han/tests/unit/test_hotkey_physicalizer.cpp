@@ -226,6 +226,70 @@ bool test_release_held_emits_inverse_for_dangling_key() {
     return true;
 }
 
+bool test_release_held_emits_inverse_after_mid_stream_failure() {
+    // The threshold-based fail knob forces the sink to succeed for
+    // the first N submits then reject. Configure N=1 so submit_down
+    // for VK_LCTRL succeeds (and lands in held_keys_) but every
+    // subsequent submit (down or up) fails. physicalize() returns
+    // false with held_keys_ = [VK_LCTRL] dangling. Clearing the
+    // fail threshold (via set_fail_after_count_for_test(0)) then
+    // calling release_held() must emit a single VK_LCTRL up.
+    FakeHostActionSink sink;
+    sink.set_fail_after_count_for_test(1);
+    HotkeyPhysicalizer phys(sink);
+    // "lctrl+lalt+a" -> modifiers [LCTRL, LALT] + trigger A.
+    // Submit 1 (LCTRL down) succeeds; submit 2 (LALT down) fails.
+    assert(!phys.physicalize("lctrl+lalt+a"));
+    // After the failed physicalize, only [LCTRL down] was recorded.
+    auto keys_after_phys = sink.recorded_keys();
+    assert(keys_after_phys.size() == 1);
+    assert(keys_after_phys[0].first == 0xA2);   // VK_LCTRL
+    assert(keys_after_phys[0].second == true);  // key_down
+    // Lift the threshold so release_held can actually submit the
+    // inverse for the dangling LCTRL.
+    sink.set_fail_after_count_for_test(0);
+    phys.release_held();
+    auto keys_after_release = sink.recorded_keys();
+    assert(keys_after_release.size() == 2);
+    assert(keys_after_release[1].first == 0xA2);   // VK_LCTRL
+    assert(keys_after_release[1].second == false); // key_up
+    // release_held must be idempotent: a second call after a clean
+    // release does not emit anything.
+    phys.release_held();
+    assert(sink.recorded_keys().size() == 2);
+    return true;
+}
+
+bool test_release_held_after_submit_up_failure_keeps_dangler() {
+    // Force a submit_up failure (after both downs and the trigger up
+    // already succeeded). N=3 means: LCTRL down (ok), LALT down (ok),
+    // A down (ok), then A up fails. held_keys_ should still contain
+    // A (and possibly the still-up LCTRL + LALT? -- no, ups happen in
+    // reverse so we have one failure mid-release). Verify the held set
+    // tracks A at minimum and that release_held re-emits the inverse.
+    FakeHostActionSink sink;
+    sink.set_fail_after_count_for_test(3);
+    HotkeyPhysicalizer phys(sink);
+    assert(!phys.physicalize("lctrl+lalt+a"));  // 3 downs ok, A up fails
+    auto keys_after_phys = sink.recorded_keys();
+    assert(keys_after_phys.size() == 3);
+    // Three downs in canonical order.
+    assert(keys_after_phys[0].first == 0xA2);  // LCTRL
+    assert(keys_after_phys[1].first == 0xA4);  // LALT
+    assert(keys_after_phys[2].first == 0x41);  // A
+    sink.set_fail_after_count_for_test(0);
+    phys.release_held();
+    auto keys_after_release = sink.recorded_keys();
+    // Should have added three key_ups in reverse order (LCTRL, LALT, A)
+    assert(keys_after_release.size() == 6);
+    assert(keys_after_release[3].first == 0xA2);   // LCTRL up
+    assert(keys_after_release[3].second == false);
+    assert(keys_after_release[4].first == 0xA4);   // LALT up
+    assert(keys_after_release[5].first == 0x41);   // A up
+    assert(keys_after_release[5].second == false);
+    return true;
+}
+
 bool test_multiple_chords_sequential() {
     // Two physicalize() calls back-to-back. Each tap is self-contained.
     FakeHostActionSink sink;
@@ -277,6 +341,10 @@ int main() {
          &test_release_held_after_successful_tap_is_no_op},
         {"release_held_emits_inverse_for_dangling_key",
          &test_release_held_emits_inverse_for_dangling_key},
+        {"release_held_emits_inverse_after_mid_stream_failure",
+         &test_release_held_emits_inverse_after_mid_stream_failure},
+        {"release_held_after_submit_up_failure_keeps_dangler",
+         &test_release_held_after_submit_up_failure_keeps_dangler},
         {"multiple_chords_sequential",
          &test_multiple_chords_sequential},
     };

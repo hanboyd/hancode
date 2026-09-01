@@ -4,6 +4,10 @@
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
 
+#include <atomic>
+#include <cstdint>
+#include <mutex>
+
 #include "remotemic/bind/errors.hpp"
 #include "remotemic/bind/probe_types.hpp"
 #include "remotemic/atvv/capabilities.hpp"
@@ -39,10 +43,135 @@
 
 #include <variant>
 
+#include <memory>
+#include <unordered_map>
+
 namespace py = pybind11;
 using namespace remotemic;
 namespace audio = remotemic::audio;
 namespace input = remotemic::input;
+
+// Phase 5 / ADR-0015 step 3 closure: IInputSource::set_event_sink takes
+// a C-style function pointer + opaque user_data. pybind11 cannot marshal
+// a Python callable into that signature, so we install a small per-
+// source registry + a C trampoline at the binding seam. The trampoline
+// is invoked from the source's pump thread (NOT from the WH_KEYBOARD_LL
+// hook callback path -- the SPSC ring buffer is the boundary; see
+// raw_input_source.cpp:265-281 and low_level_keyboard_hook.cpp:222-236),
+// so taking the GIL inside it is safe per ADR-0015 §3.6's 5 us budget.
+namespace {
+struct SinkHolder {
+    // The Python callable, copied out under the mutex before invocation
+    // so the sink setter can drop / replace its holder while the pump
+    // thread is mid-flight without invalidating the in-flight call.
+    // py::object (NOT shared_ptr<py::function>): py::object is
+    // default-constructible and naturally nullptr-safe, and the
+    // shared_ptr indirection previously caused a Fatal Python error
+    // at interpreter finalization when the last shared_ptr dropped
+    // during Python's tstate-NULL phase.
+    std::mutex mu;
+    py::object py_sink;
+    // Atomic sentinel so the pump thread can short-circuit without
+    // taking the mutex when a clear() is in flight.
+    std::atomic<bool> armed{false};
+};
+
+void input_source_sink_trampoline(input::InputEvent ev, void* user_data) {
+    if (user_data == nullptr) return;
+    auto* holder = static_cast<SinkHolder*>(user_data);
+    // Quick atomic check; the lock is only taken when we have a real
+    // candidate. The source's own set_event_sink(nullptr, ...) call
+    // sets user_data=nullptr on the C++ side, so this path never
+    // dereferences a torn-down holder.
+    if (!holder->armed.load(std::memory_order_acquire)) return;
+
+    py::object py_sink_copy;
+    {
+        std::lock_guard<std::mutex> lock(holder->mu);
+        py_sink_copy = holder->py_sink;
+    }
+    if (py_sink_copy.is_none()) return;
+
+    // GIL is acquired ONLY on the pump thread path (the WH_KEYBOARD_LL
+    // hook callback runs at <5us and never reaches here; see
+    // raw_input_source.cpp / low_level_keyboard_hook.cpp comments).
+    py::gil_scoped_acquire gil;
+    py::dict d;
+    d["source"]     = static_cast<std::uint8_t>(ev.source);
+    d["kind"]       = static_cast<std::uint8_t>(ev.kind);
+    d["vk_code"]    = ev.vk_code;
+    d["scan_code"]  = ev.scan_code;
+    d["usage_id"]   = ev.usage_id;
+    d["extra_info"] = ev.extra_info;
+    d["injected"]   = ev.injected;
+    d["extended"]   = ev.extended;
+    try {
+        py_sink_copy(d);
+    } catch (const py::error_already_set&) {
+        // Swallow Python exceptions from the user-supplied callback;
+        // the source pump thread must keep draining the SPSC ring.
+        // Users who want logging install their own try/except inside
+        // the callable.
+    }
+}
+
+// Process-wide registry. The map owns the SinkHolder shared_ptr; the
+// source only holds a non-owning pointer (per ADR-0015 §3.2: "user_data
+// is opaque"). The registry keeps the holder alive for as long as the
+// source's user_data points to it, so the pump thread never dereferences
+// a torn-down holder even if Python releases its reference first.
+std::unordered_map<input::IInputSource*, std::shared_ptr<SinkHolder>>
+    g_input_source_sink_registry;
+std::mutex g_input_source_sink_registry_mu;
+
+void bind_input_source_set_event_sink(input::IInputSource& self,
+                                       py::function py_sink) {
+    auto holder = std::make_shared<SinkHolder>();
+    {
+        std::lock_guard<std::mutex> lock(holder->mu);
+        holder->py_sink = std::move(py_sink);
+    }
+    holder->armed.store(true, std::memory_order_release);
+
+    // Detach the C++ side FIRST so any pump dispatch already in flight
+    // either runs under the old holder (still alive in the registry
+    // until we overwrite) or short-circuits on nullptr user_data.
+    std::shared_ptr<SinkHolder> old_holder;
+    {
+        std::lock_guard<std::mutex> lock(g_input_source_sink_registry_mu);
+        auto it = g_input_source_sink_registry.find(&self);
+        if (it != g_input_source_sink_registry.end()) {
+            old_holder = std::move(it->second);
+        }
+        self.set_event_sink(nullptr, nullptr);
+        g_input_source_sink_registry[&self] = holder;
+    }
+    if (old_holder) {
+        old_holder->armed.store(false, std::memory_order_release);
+        std::lock_guard<std::mutex> lock(old_holder->mu);
+        old_holder->py_sink = py::object();
+    }
+    self.set_event_sink(&input_source_sink_trampoline, holder.get());
+}
+
+void clear_input_source_sink_registry_entry(input::IInputSource& self) {
+    std::shared_ptr<SinkHolder> old_holder;
+    {
+        std::lock_guard<std::mutex> lock(g_input_source_sink_registry_mu);
+        auto it = g_input_source_sink_registry.find(&self);
+        if (it == g_input_source_sink_registry.end()) return;
+        // Detach the C++ side first so the pump thread sees nullptr.
+        self.set_event_sink(nullptr, nullptr);
+        old_holder = std::move(it->second);
+        g_input_source_sink_registry.erase(it);
+    }
+    if (old_holder) {
+        old_holder->armed.store(false, std::memory_order_release);
+        std::lock_guard<std::mutex> lock(old_holder->mu);
+        old_holder->py_sink = py::object();
+    }
+}
+}  // namespace
 
 PYBIND11_MODULE(_C, m) {
     m.doc() = "RemoteMic Windows native binding - private implementation "
@@ -54,6 +183,43 @@ PYBIND11_MODULE(_C, m) {
     // and the Python __version__ in apps/windows/rc003/src/ovb_rc003/__init__.py
     // per project policy cpp-migration-version-policy.
     m.attr("__version__") = REMOTEMIC_VERSION;
+
+    // Drain the IInputSource sink registry at interpreter exit. Without
+    // this hook the SinkHolder's py::object drops the Python callable's
+    // refcount during C runtime finalization -- well after Python's
+    // tstate is gone -- which trips a Fatal Python error. Registering
+    // via Python's atexit module (NOT std::atexit, which fires too
+    // late) makes sure the py::object destructors happen while Python is
+    // still alive. The py::cpp_function lifetime is bounded to the
+    // module itself, so the lambda outlives this init only as long as
+    // the module is importable.
+    {
+        py::module_ atexit_mod = py::module_::import("atexit");
+        atexit_mod.attr("register")(py::cpp_function(
+            +[]() {
+                py::gil_scoped_acquire gil;
+                std::unordered_map<input::IInputSource*,
+                                    std::shared_ptr<SinkHolder>>
+                    drained;
+                {
+                    std::lock_guard<std::mutex> lock(
+                        g_input_source_sink_registry_mu);
+                    for (auto& kv : g_input_source_sink_registry) {
+                        try {
+                            kv.first->set_event_sink(nullptr, nullptr);
+                        } catch (...) {
+                            // Source already destroyed; map cleared anyway.
+                        }
+                    }
+                    drained.swap(g_input_source_sink_registry);
+                }
+                for (auto& kv : drained) {
+                    kv.second->armed.store(false, std::memory_order_release);
+                    std::lock_guard<std::mutex> lock(kv.second->mu);
+                    kv.second->py_sink = py::object();
+                }
+            }));
+    }
 
     // ------------------------------------------------------------------
     // Error translation. Per ADR-0011 §2:
@@ -937,13 +1103,32 @@ PYBIND11_MODULE(_C, m) {
 
     // 13.2 InputEvent POD (cross-platform). The timestamp is exposed
     // as nanoseconds-since-epoch so pybind11/chrono doesn't need to
-    // special-case steady_clock on every consumer.
+    // special-case steady_clock on every consumer. The enum fields
+    // (source / kind) are exposed as plain ints so callers can compare
+    // them against ``InputSourceKind.RawInputHid.value`` etc.; the
+    // enum classes are still bound above so callers can name values.
     py::class_<input::InputEvent>(m, "InputEvent")
         .def(py::init<>(),
              "Default-constructed event: SourceKind::RawInputKeyboard\n"
              "+ EventKind::KeyDown + vk/scan/usage/extra_info all 0.")
-        .def_readwrite("source",     &input::InputEvent::source)
-        .def_readwrite("kind",       &input::InputEvent::kind)
+        .def_property("source",
+                      [](const input::InputEvent& ev) {
+                          return static_cast<int>(ev.source);
+                      },
+                      [](input::InputEvent& ev, int v) {
+                          ev.source = static_cast<input::InputEvent::SourceKind>(v);
+                      },
+                      "SourceKind as int (RawInputKeyboard=0, RawInputHid=1,\n"
+                      "FridaHidTap=2, LowLevelHook=3, Synthetic=4).")
+        .def_property("kind",
+                      [](const input::InputEvent& ev) {
+                          return static_cast<int>(ev.kind);
+                      },
+                      [](input::InputEvent& ev, int v) {
+                          ev.kind = static_cast<input::InputEvent::EventKind>(v);
+                      },
+                      "EventKind as int (KeyDown=0, KeyUp=1, KeyCancel=2,\n"
+                      "SystemAction=3).")
         .def_readwrite("vk_code",    &input::InputEvent::vk_code)
         .def_readwrite("scan_code",  &input::InputEvent::scan_code)
         .def_readwrite("usage_id",   &input::InputEvent::usage_id)
@@ -951,19 +1136,66 @@ PYBIND11_MODULE(_C, m) {
         .def_readwrite("injected",   &input::InputEvent::injected)
         .def_readwrite("extended",   &input::InputEvent::extended);
 
-    // 13.3 ResolvedAction POD (cross-platform).
+    // 13.3 ResolvedAction POD (cross-platform). Enum fields exposed as
+    // plain ints for the same reason as InputEvent above.
     py::class_<input::ResolvedAction>(m, "ResolvedAction")
         .def(py::init<>(),
              "Default-constructed ResolvedAction: kind=Disabled,\n"
              "vk_code=0, system_action=Escape, key_down=true.")
-        .def_readwrite("kind",           &input::ResolvedAction::kind)
+        .def_property("kind",
+                      [](const input::ResolvedAction& self) {
+                          return static_cast<int>(self.kind);
+                      },
+                      [](input::ResolvedAction& self, int v) {
+                          self.kind = static_cast<input::ResolvedAction::Kind>(v);
+                      },
+                      "ResolvedActionKind as int (KeySequence=0, SystemAction=1,\n"
+                      "Disabled=2).")
         .def_readwrite("vk_code",        &input::ResolvedAction::vk_code)
-        .def_readwrite("system_action",  &input::ResolvedAction::system_action)
+        .def_property("system_action",
+                      [](const input::ResolvedAction& self) {
+                          return static_cast<int>(self.system_action);
+                      },
+                      [](input::ResolvedAction& self, int v) {
+                          self.system_action = static_cast<input::SystemAction>(v);
+                      },
+                      "SystemAction as int (see SystemAction enum).")
         .def_readwrite("key_down",       &input::ResolvedAction::key_down);
 
     // 13.4 IInputSource interface + recording double (cross-platform).
     py::class_<input::IInputSource, std::shared_ptr<input::IInputSource>>(
         m, "IInputSource")
+        .def("set_event_sink",
+             [](input::IInputSource& self, py::object sink_obj) {
+                 if (sink_obj.is_none()) {
+                     clear_input_source_sink_registry_entry(self);
+                     return;
+                 }
+                 py::function sink;
+                 try {
+                     sink = sink_obj.cast<py::function>();
+                 } catch (const py::cast_error&) {
+                     throw py::type_error(
+                         "set_event_sink argument must be a callable "
+                         "or None");
+                 }
+                 bind_input_source_set_event_sink(self, std::move(sink));
+             },
+             py::arg("sink"),
+             "Register ``sink`` (a Python callable accepting a dict\n"
+             "with keys ``source``, ``kind``, ``vk_code``,\n"
+             "``scan_code``, ``usage_id``, ``extra_info``, ``injected``,\n"
+             "``extended``) as the receiver for events produced by\n"
+             "this source. Passing None clears the previous sink.\n"
+             "The callable is invoked on the source's pump thread;\n"
+             "do not block. Replaces any previously registered sink.")
+        .def("__release_sink__",
+             [](input::IInputSource& self) {
+                 clear_input_source_sink_registry_entry(self);
+             },
+             "Binding-side cleanup: drop the registered sink so the\n"
+             "Python callable may be released. Called automatically\n"
+             "when the Python wrapper is GC'd, but exposed for tests.")
         .def("start",
              &input::IInputSource::start,
              "Open the underlying handle / pump thread. Returns\n"
@@ -1042,8 +1274,10 @@ PYBIND11_MODULE(_C, m) {
         .def("submit_key",
              [](input::IHostActionSink& self,
                 std::uint16_t vk, bool down,
-                std::chrono::milliseconds deadline) {
-                 return self.submit_key(vk, down, deadline);
+                std::int64_t deadline_ms) {
+                 return self.submit_key(
+                     vk, down,
+                     std::chrono::milliseconds(deadline_ms));
              },
              py::arg("vk_code"),
              py::arg("key_down"),

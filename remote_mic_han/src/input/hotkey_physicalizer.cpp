@@ -12,6 +12,7 @@
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -307,47 +308,76 @@ bool HotkeyPhysicalizer::physicalize(const char* tokens) noexcept {
     // Tap-style hotkey: submit down sequence (modifiers in canonical
     // order, then trigger), then up sequence (trigger first, then
     // modifiers in reverse). The physicalizer tracks every VK it has
-    // submitted as down so release_held() can emit the inverse for any
-    // key left dangling if the sink starts failing mid-tap.
-    std::vector<std::uint16_t> pressed_in_order;
+    // pressed-down but not yet released in held_keys_ so release_held()
+    // can emit the inverse for any key left dangling if the sink
+    // starts failing mid-tap.
+    //
+    // Invariants:
+    //   * held_keys_ is NOT cleared at entry -- a prior failed tap
+    //     may have left keys dangling for the next caller to clean up.
+    //   * A successful submit_down pushes the VK into held_keys_.
+    //   * A successful submit_up removes the VK from held_keys_.
+    //   * A failed submit_up leaves the VK in held_keys_ so
+    //     release_held() can still emit the inverse.
+    //   * Any failure (down or up) marks this tap unsuccessful; the
+    //     function returns false. Ups after the first failure still
+    //     run so a sink that recovers mid-call gets a chance to
+    //     release the still-down modifiers instead of leaking them.
+    bool all_ok = true;
     auto submit_down = [&](std::uint16_t vk) -> bool {
         if (!sink_.submit_key(vk, true, std::chrono::milliseconds(50))) {
             ++physicalize_error_count_;
             return false;
         }
-        pressed_in_order.push_back(vk);
+        held_keys_.push_back(vk);
         return true;
     };
     auto submit_up = [&](std::uint16_t vk) -> bool {
-        return sink_.submit_key(vk, false, std::chrono::milliseconds(50));
+        const bool ok = sink_.submit_key(vk, false, std::chrono::milliseconds(50));
+        if (!ok) {
+            ++physicalize_error_count_;
+            // Leave the VK in held_keys_ on submit_up failure so
+            // release_held() still emits the inverse up. The sink
+            // implementation decides whether to retry; the physicalizer
+            // is purely the safety net.
+            return false;
+        }
+        // Drop the VK from held_keys_ (last occurrence; duplicates
+        // would be unusual but possible if a chord repeats a token).
+        for (auto it = held_keys_.rbegin(); it != held_keys_.rend(); ++it) {
+            if (*it == vk) {
+                held_keys_.erase(std::next(it).base());
+                break;
+            }
+        }
+        return true;
     };
 
     for (std::uint16_t mvk : chord.modifiers) {
         if (!submit_down(mvk)) return false;
     }
     if (!submit_down(chord.trigger_vk)) return false;
-    // Tap: release trigger, then modifiers in reverse. submit_up
-    // failure during tap-style release is non-fatal (counted as
-    // physicalize_error_count_ via submit_key path).
-    (void)submit_up(chord.trigger_vk);
+    // Tap: release trigger first, then modifiers in reverse order.
+    // On failure we keep going through the rest of the up sequence so
+    // the sink gets every chance to release the still-down modifiers;
+    // held_keys_ tracks the dangling set for release_held().
+    if (!submit_up(chord.trigger_vk)) all_ok = false;
     for (auto it = chord.modifiers.rbegin(); it != chord.modifiers.rend(); ++it) {
-        (void)submit_up(*it);
+        if (!submit_up(*it)) all_ok = false;
     }
-    // After a successful tap, every pressed VK was released; held_keys_
-    // is empty. release_held() is a no-op until the IHostActionSink
-    // exposes a release surface (sub-pass B), at which point this
-    // invariant moves to the sink side.
-    held_keys_.clear();
-    ++physicalized_count_;
-    return true;
+    if (all_ok) {
+        ++physicalized_count_;
+    }
+    return all_ok;
 }
 
 void HotkeyPhysicalizer::release_held() noexcept {
-    // Emit inverse up for every VK this instance last pressed but did
-    // not release. After a successful physicalize(), held_keys_ is
-    // empty (tap-style). release_held() is the safety net: callers
-    // invoke it at voice-session transition + shutdown so a stuck mod
-    // key never leaks across hotkey boundaries.
+    // Emit inverse up for every VK this instance currently holds down.
+    // Insertion order (FIFO) is used: the test fixture expects the
+    // release sequence to mirror the press sequence, not the reverse,
+    // because in a tap-style fail mid-release the down order is what
+    // the operator observed. held_keys_ is cleared at the end so a
+    // second call is a no-op (release_held is idempotent).
     for (std::uint16_t vk : held_keys_) {
         (void)sink_.submit_key(vk, false, std::chrono::milliseconds(50));
     }

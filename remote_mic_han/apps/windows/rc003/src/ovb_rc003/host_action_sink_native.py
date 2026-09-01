@@ -30,10 +30,13 @@ side effects.
 from __future__ import annotations
 
 import enum
+import logging
 from typing import Optional
 
 from . import win32_input as py_win32_input
 from ._remotemic_native_runtime import choose_implementation
+
+_logger = logging.getLogger(__name__)
 
 
 # The python side already names SystemAction values via string tokens
@@ -247,9 +250,25 @@ class _NativeHostActionSink:
         return bool(start_fn())
 
     def stop(self) -> None:
+        # Drop any pending queue on the native side BEFORE closing the
+        # worker thread, so a half-submitted chord never leaks.
+        cancel_fn = getattr(self._impl, "cancel_pending", None)
+        if callable(cancel_fn):
+            try:
+                cancel_fn()
+            except (TypeError, ValueError, RuntimeError) as exc:
+                _logger.warning(
+                    "native host action sink cancel_pending failed: %s",
+                    exc,
+                )
         stop_fn = getattr(self._impl, "stop", None)
         if callable(stop_fn):
-            stop_fn()
+            try:
+                stop_fn()
+            except (TypeError, ValueError, RuntimeError) as exc:
+                _logger.warning(
+                    "native host action sink stop failed: %s", exc,
+                )
 
     def submitted_count(self) -> int:
         count_fn = getattr(self._impl, "submitted_count", None)

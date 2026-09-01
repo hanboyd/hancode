@@ -24,9 +24,10 @@ namespace {
 
 // Recording-double helper: the test injects events through the source
 // itself; if the sink registered via set_event_sink gets called, we count
-// that as "real callback fired". Step 1 fake deliberately does NOT
-// invoke the sink from inject_event_for_test (the fake is a recording
-// double, not a relay); tests assert exactly the contract documented.
+// that as "real callback fired". After the 2026-09-01 fix, FakeInputSource
+// is a relay for the registered sink (per the IInputSource contract): it
+// records the event AND invokes the sink, so the C++ binding-side binding
+// smoke proves the marshals contract actually fires the Python callable.
 std::vector<InputEvent> g_captured;
 
 void capture_sink(InputEvent ev, void* /*user_data*/) {
@@ -52,9 +53,11 @@ bool test_fake_input_source_injects_and_records() {
     assert(recorded.size() == 1);
     assert(recorded[0].vk_code == 0x41);
 
-    // The fake is a recording double, NOT a relay — sink stays empty
-    // until step 2 wires a relay path on top of the recording buffer.
-    assert(g_captured.empty());
+    // Per the IInputSource contract the fake also relays the injected
+    // event to the registered sink; the binding smoke depends on this
+    // so the C function-pointer -> user callback path is exercised.
+    assert(g_captured.size() == 1);
+    assert(g_captured[0].vk_code == 0x41);
 
     src.stop();
     return true;

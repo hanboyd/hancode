@@ -753,6 +753,27 @@ if(REMOTEMIC_BUILD_TESTS)
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
 
+        # Phase 5 / ADR-0015 §6 / step 3 closure: input-layer binding
+        # smoke (G3). Loads the bundled .pyd, exercises the IInputSource
+        # / IHostActionSink / HotkeyPhysicalizer lifecycle through the
+        # recording doubles, and asserts the new set_event_sink C
+        # function-pointer -> Python callback marshaling fires end-to-
+        # end. Win32-only symbols (RawInputSource / SendInputActionSink)
+        # are NOT exercised here; they fail-closed on non-Windows and
+        # require real hardware for G6. On fail, do not advance the
+        # step 3 closeout.
+        add_test(
+            NAME remotemic_input_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_input_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_input_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+        )
+
         # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
         # (G5). Each runs identical scripts through both the python
         # baseline and the C++ binding (via the bridge wrappers) and

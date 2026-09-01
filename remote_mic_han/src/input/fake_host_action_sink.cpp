@@ -8,6 +8,10 @@ bool FakeHostActionSink::submit_key(std::uint16_t vk_code, bool key_down,
         ++submit_error_count_;
         return false;
     }
+    if (fail_after_count_ != 0 && submitted_count_ >= fail_after_count_) {
+        ++submit_error_count_;
+        return false;
+    }
     std::lock_guard<std::mutex> lock(mu_);
     keys_.push_back({vk_code, key_down});
     ++submitted_count_;
@@ -16,6 +20,10 @@ bool FakeHostActionSink::submit_key(std::uint16_t vk_code, bool key_down,
 
 bool FakeHostActionSink::submit_system_action(SystemAction action) noexcept {
     if (submit_fails_) {
+        ++submit_error_count_;
+        return false;
+    }
+    if (fail_after_count_ != 0 && submitted_count_ >= fail_after_count_) {
         ++submit_error_count_;
         return false;
     }
@@ -60,6 +68,11 @@ std::size_t FakeHostActionSink::pending_count() const {
 
 void FakeHostActionSink::set_submit_fails_for_test(bool fails) noexcept {
     submit_fails_ = fails;
+}
+
+void FakeHostActionSink::set_fail_after_count_for_test(
+    std::uint64_t threshold) noexcept {
+    fail_after_count_ = threshold;
 }
 
 } // namespace remotemic::input
