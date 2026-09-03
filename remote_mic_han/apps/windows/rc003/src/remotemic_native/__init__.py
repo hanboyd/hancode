@@ -15,6 +15,7 @@ try:
     from ._C import (  # type: ignore[import-not-found]
         __version__,
         ErrorCode,
+        RemoteMicError,
         VersionInfo,
         Counter,
         AtvvCapabilities,
@@ -74,6 +75,18 @@ try:
         ActionResolver,
         DefaultActionResolver,
         HotkeyPhysicalizer,
+        # Phase 6: bounded-mailbox C++/WinRT GATT owner. Discovery remains
+        # in Python so existing identity selection and diagnostics stay
+        # unchanged; the connection itself has exactly one owner.
+        WinRTBleTransport,
+        CoordinatorState,
+        CoordinatorCommandKind,
+        CoordinatorCommandStatus,
+        CoordinatorEventKind,
+        CoordinatorCommandResult,
+        ApplicationCoordinator,
+        WindowsVoiceAudioPolicyLease,
+        UiSettingsState,
     )
     _C_AVAILABLE = True
 except ImportError:
@@ -85,6 +98,7 @@ except ImportError:
     _C_AVAILABLE = False
     __version__ = "0.0.0+unknown"
     ErrorCode = None  # type: ignore[assignment,misc]
+    RemoteMicError = None  # type: ignore[assignment,misc]
     VersionInfo = None  # type: ignore[assignment,misc]
     Counter = None  # type: ignore[assignment,misc]
     AtvvCapabilities = None  # type: ignore[assignment,misc]
@@ -121,6 +135,15 @@ except ImportError:
     ActionResolver = None  # type: ignore[assignment,misc]
     DefaultActionResolver = None  # type: ignore[assignment,misc]
     HotkeyPhysicalizer = None  # type: ignore[assignment,misc]
+    WinRTBleTransport = None  # type: ignore[assignment,misc]
+    CoordinatorState = None  # type: ignore[assignment,misc]
+    CoordinatorCommandKind = None  # type: ignore[assignment,misc]
+    CoordinatorCommandStatus = None  # type: ignore[assignment,misc]
+    CoordinatorEventKind = None  # type: ignore[assignment,misc]
+    CoordinatorCommandResult = None  # type: ignore[assignment,misc]
+    ApplicationCoordinator = None  # type: ignore[assignment,misc]
+    WindowsVoiceAudioPolicyLease = None  # type: ignore[assignment,misc]
+    UiSettingsState = None  # type: ignore[assignment,misc]
 
 
 # ``CounterSink`` is the C++ typedef used by ``probe_callback``'s argument
@@ -132,6 +155,7 @@ __all__ = [
     "_C_AVAILABLE",
     "__version__",
     "ErrorCode",
+    "RemoteMicError",
     "VersionInfo",
     "Counter",
     "AtvvCapabilities",
@@ -168,4 +192,13 @@ __all__ = [
     "ActionResolver",
     "DefaultActionResolver",
     "HotkeyPhysicalizer",
+    "WinRTBleTransport",
+    "CoordinatorState",
+    "CoordinatorCommandKind",
+    "CoordinatorCommandStatus",
+    "CoordinatorEventKind",
+    "CoordinatorCommandResult",
+    "ApplicationCoordinator",
+    "WindowsVoiceAudioPolicyLease",
+    "UiSettingsState",
 ]

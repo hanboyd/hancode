@@ -101,6 +101,12 @@ try {
         throw "$builtExe --dry-run failed with exit code $($smokeProcess.ExitCode)"
     }
 
+    Write-Host "-- built-artifact Qt runtime smoke check (imports settings runtime, no window) --"
+    $qtSmokeProcess = Start-Process -FilePath $builtExe -ArgumentList "--qt-runtime-smoke" -WindowStyle Hidden -Wait -PassThru
+    if ($qtSmokeProcess.ExitCode -ne 0) {
+        throw "$builtExe --qt-runtime-smoke failed with exit code $($qtSmokeProcess.ExitCode)"
+    }
+
     Write-Host "== build complete: dist\RemoteMicRC003\ (unsigned) =="
 } finally {
     Pop-Location

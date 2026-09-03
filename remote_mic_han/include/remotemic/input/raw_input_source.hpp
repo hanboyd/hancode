@@ -49,6 +49,7 @@ private:
 
     void PumpThreadMain();
     void EnqueueEvent(InputEvent ev);
+    void DrainEvents();
 
     SinkFn sink_{nullptr};
     void*  user_data_{nullptr};

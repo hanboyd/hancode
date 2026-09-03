@@ -59,16 +59,15 @@ class _PythonSystemAction(enum.IntEnum):
 # values to the existing python-side helpers so the python shim stays
 # thin.
 _SYSTEM_ACTION_DISPATCH = {
-    _PythonSystemAction.VolumeUp: "volume_up",
-    _PythonSystemAction.VolumeDown: "volume_down",
-    _PythonSystemAction.VolumeMute: "volume_mute",
-    _PythonSystemAction.ShowDesktop: "show_desktop",
-    _PythonSystemAction.Escape: "escape",
-    _PythonSystemAction.Return: "return_key",
-    _PythonSystemAction.Backspace: "backspace",
-    _PythonSystemAction.ContextMenu: "context_menu",
-    _PythonSystemAction.AppSwitch: "app_switch",
-    _PythonSystemAction.CodexOpen: "codex_open",
+    _PythonSystemAction.VolumeUp: "send_volume_up",
+    _PythonSystemAction.VolumeDown: "send_volume_down",
+    _PythonSystemAction.VolumeMute: "send_volume_mute",
+    _PythonSystemAction.ShowDesktop: "send_show_desktop",
+    _PythonSystemAction.Escape: "send_escape",
+    _PythonSystemAction.Return: "send_return",
+    _PythonSystemAction.Backspace: "send_delete_backward",
+    _PythonSystemAction.ContextMenu: "send_context_menu",
+    _PythonSystemAction.AppSwitch: "send_app_switcher",
 }
 
 
@@ -102,8 +101,13 @@ class _PythonHostActionSink:
             self._submit_error_count += 1
             return False
         try:
-            # win32_input.send_keys accepts a list of (vk, down) tuples.
-            py_win32_input.send_keys([(int(vk_code), bool(key_down))])
+            # The baseline's raw sender uses ``key_up`` as its tuple
+            # boolean, while IHostActionSink uses ``key_down``.
+            sent = py_win32_input._real_send_input_batch(
+                [(int(vk_code), not bool(key_down))]
+            )
+            if sent != 1:
+                raise OSError(f"SendInput delivered {sent}/1 event")
             self._submitted_count += 1
             return True
         except Exception:
@@ -203,6 +207,10 @@ class _NativeHostActionSink:
     def submit_key(
         self, vk_code: int, key_down: bool, deadline: int = 50
     ) -> bool:
+        if not self._is_native:
+            return bool(
+                self._impl.submit_key(vk_code, key_down, deadline)
+            )
         import datetime as _dt
 
         submit_fn = getattr(self._impl, "submit_key", None)

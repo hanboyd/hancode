@@ -8,6 +8,7 @@
 // the user's current syllable.
 
 #include <chrono>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -49,7 +50,7 @@ private:
     ClockFn now_;
     mutable std::mutex m_;
     std::vector<std::int16_t> buf_;
-    std::uint64_t dropped_count_{0};
+    std::atomic<std::uint64_t> dropped_count_{0};
 };
 
 } // namespace remotemic::audio

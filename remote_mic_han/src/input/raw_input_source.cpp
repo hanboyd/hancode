@@ -156,6 +156,21 @@ void RawInputSource::EnqueueEvent(InputEvent ev) {
     write_idx_.store(w + 1, std::memory_order_release);
 }
 
+void RawInputSource::DrainEvents() {
+    const std::size_t r = read_idx_.load(std::memory_order_relaxed);
+    const std::size_t w = write_idx_.load(std::memory_order_acquire);
+    SinkFn sink = sink_;
+    void* ud = user_data_;
+    for (std::size_t i = r; i < w; ++i) {
+        const InputEvent& ev = ring_[i & mask_];
+        if (sink != nullptr) {
+            sink(ev, ud);
+        }
+        event_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+    read_idx_.store(w, std::memory_order_release);
+}
+
 void RawInputSource::PumpThreadMain() {
     // Register message-only window class + create HWND on this thread.
     HINSTANCE module = GetModuleHandleW(nullptr);
@@ -261,24 +276,17 @@ void RawInputSource::PumpThreadMain() {
                 continue;
             }
             EnqueueEvent(ev);
+            // The message-pump thread is also the single consumer. Dispatch
+            // each bounded batch now; retaining events until WM_QUIT made the
+            // live coordinator blind to mic down/up for the whole run.
+            DrainEvents();
         }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 
     // Drain remaining queued events to the sink.
-    const std::size_t r = read_idx_.load(std::memory_order_relaxed);
-    const std::size_t w = write_idx_.load(std::memory_order_acquire);
-    SinkFn sink = sink_;
-    void*  ud   = user_data_;
-    for (std::size_t i = r; i < w; ++i) {
-        const InputEvent& ev = ring_[i & mask_];
-        if (sink != nullptr) {
-            sink(ev, ud);
-        }
-        event_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-    read_idx_.store(w, std::memory_order_release);
+    DrainEvents();
 
     // Unregister + tear down HWND.
     RAWINPUTDEVICE unreg[2] = {};

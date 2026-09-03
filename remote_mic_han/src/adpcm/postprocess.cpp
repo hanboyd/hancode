@@ -56,7 +56,14 @@ std::vector<std::int16_t> postprocess(
     }
     if (samples.size() >= 3) {
         for (std::size_t i = 1; i + 1 < samples.size(); ++i) {
-            smoothed[i] = (smoothed[i - 1] + 2 * smoothed[i] + smoothed[i + 1]) >> 2;
+            // Read every tap from the immutable input.  Reading
+            // smoothed[i - 1] here turns the FIR into a recursive
+            // filter and drifts from the Python/Swift baseline after
+            // the first interior sample.
+            smoothed[i] = (
+                static_cast<long long>(samples[i - 1])
+                + 2 * static_cast<long long>(samples[i])
+                + static_cast<long long>(samples[i + 1])) >> 2;
         }
     }
 

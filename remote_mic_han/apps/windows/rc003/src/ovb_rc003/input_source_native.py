@@ -40,10 +40,13 @@ already holding a device path or running parity tests.
 
 from __future__ import annotations
 
+import logging
 from typing import Callable, List, Optional
 
 from . import raw_input_windows as py_raw_input
 from ._remotemic_native_runtime import choose_implementation
+
+_logger = logging.getLogger(__name__)
 
 
 class _PythonInputSource:

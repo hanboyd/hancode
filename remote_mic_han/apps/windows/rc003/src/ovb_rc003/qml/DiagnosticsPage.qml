@@ -115,43 +115,57 @@ Item {
         ColumnLayout {
             width: root.width - tokens.spacingLarge * 2
             x: tokens.spacingLarge
-            y: tokens.spacingLarge
-            spacing: tokens.spacingLarge
+            y: tokens.spacingSmall
+            spacing: tokens.spacingMedium
 
             // -- Header / refresh -------------------------------------------
-            RowLayout {
+            Rectangle {
                 Layout.fillWidth: true
-                Label {
-                    Layout.fillWidth: true
-                    text: ""
-                    font.pixelSize: tokens.fontSizeTitle
-                    font.bold: true
-                    color: tokens.textPrimary
+                implicitHeight: diagnosticsHeader.implicitHeight + tokens.spacingLarge * 2
+                radius: tokens.cornerRadiusLarge
+                color: tokens.surface
+                border.color: tokens.border
+                border.width: 1
+
+                RowLayout {
+                    id: diagnosticsHeader
+                    anchors.fill: parent
+                    anchors.margins: tokens.spacingLarge
+                    spacing: tokens.spacingMedium
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: tokens.spacingTiny
+                        Label {
+                            text: qsTr("系统检查")
+                            font.pixelSize: tokens.fontSizeTitle
+                            font.bold: true
+                            color: tokens.textPrimary
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: qsTr("检查设备、按键、蓝牙与语音链路。结果只代表对应项目，不用“进程运行”冒充“设备已连接”。")
+                            color: tokens.textSecondary
+                            font.pixelSize: tokens.fontSizeSmall
+                        }
+                    }
+                    BusyIndicator {
+                        id: refreshBusyIndicator
+                        objectName: "refreshBusyIndicator"
+                        running: DiagnosticsController.isRefreshing
+                        visible: running
+                        implicitWidth: 20
+                        implicitHeight: 20
+                    }
+                    Button {
+                        id: refreshButton
+                        objectName: "refreshButton"
+                        text: qsTr("重新检测")
+                        highlighted: true
+                        enabled: !DiagnosticsController.isRefreshing
+                        onClicked: DiagnosticsController.refreshDiagnostics()
+                    }
                 }
-                BusyIndicator {
-                    id: refreshBusyIndicator
-                    objectName: "refreshBusyIndicator"
-                    running: DiagnosticsController.isRefreshing
-                    visible: running
-                    implicitWidth: 20
-                    implicitHeight: 20
-                }
-                Button {
-                    id: refreshButton
-                    objectName: "refreshButton"
-                    text: qsTr("重新检测")
-                    enabled: !DiagnosticsController.isRefreshing
-                    onClicked: DiagnosticsController.refreshDiagnostics()
-                }
-            }
-            Label {
-                Layout.fillWidth: true
-                Layout.preferredHeight: implicitHeight
-                wrapMode: Text.WordWrap
-                text: qsTr("下面按用途分组显示检测结果：一个正在运行的进程或已配对的设备，本身"
-                    + "不代表按键或语音已经可用——请以每一项的具体结果为准。")
-                color: tokens.textPrimary
-                font.pixelSize: tokens.fontSizeSmall
             }
 
             // Prominent, page-level error (XRBM-031 RETRY 1 item 2): shown

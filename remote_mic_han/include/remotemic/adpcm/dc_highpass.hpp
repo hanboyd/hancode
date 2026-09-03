@@ -9,7 +9,8 @@
 //   alpha = exp(-2 * pi * cutoff_hz / sample_rate)
 //
 // Contract:
-//   - No I/O, no threads, no globals, no exceptions.
+//   - No I/O, no threads, no globals. Construction rejects non-positive
+//     sample_rate/cutoff_hz with std::invalid_argument, matching Python.
 //   - State is owned by the instance; reset before each new audio
 //     session.
 //   - First sample initializes the filter: previous_input is set to
@@ -32,13 +33,10 @@ class DcHighPassFilter {
 public:
     // Construct a filter with the given sample rate and cutoff
     // frequency. Matches the Python baseline's __init__
-    // (atvv_protocol.py:213-217). Both values must be positive; the
-    // C++ side trusts the caller for now (the binding layer always
-    // passes the ATVV defaults). The state is initialized by reset()
-    // inside the ctor.
+    // (atvv_protocol.py:213-217). Both values must be positive.
     explicit DcHighPassFilter(
         double sample_rate,
-        double cutoff_hz) noexcept;
+        double cutoff_hz);
 
     // Reset to the uninitialized state. The next call to process()
     // will re-initialize previous_input from samples[0].

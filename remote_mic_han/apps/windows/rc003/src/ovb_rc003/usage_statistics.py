@@ -93,12 +93,75 @@ class UsageStatisticsStore:
             cell["durationText"] = format_duration(float(cell["voiceSeconds"]))
             cell["frequencyText"] = f"{cell['usageCount']} 次"
 
+        # Compatibility projection for the accepted calendar-style QML.  The
+        # rolling 371-cell snapshot above remains the primary data contract;
+        # these additional keys let the previous UI render the current year
+        # without changing what is persisted.
+        year_end = date(current_day.year, 12, 31)
+        calendar_cells: List[Dict[str, object]] = []
+        month_blocks: List[Dict[str, object]] = []
+        for month_index in range(12):
+            month_start = date(current_day.year, month_index + 1, 1)
+            month_end = (
+                date(current_day.year, month_index + 2, 1) - timedelta(days=1)
+                if month_index < 11
+                else year_end
+            )
+            month_cells: List[Dict[str, object]] = []
+            cell_day = month_start
+            while cell_day <= month_end:
+                raw = days.get(cell_day.isoformat(), {}) if cell_day <= current_day else {}
+                voice_seconds = _nonnegative_float(raw.get("voice_seconds", 0.0))
+                usage_count = _nonnegative_int(raw.get("button_presses", 0)) + _nonnegative_int(
+                    raw.get("voice_sessions", 0)
+                )
+                cell = {
+                    "date": cell_day.isoformat(),
+                    "monthIndex": month_index,
+                    "weekIndex": (cell_day.day - 1 + month_start.weekday()) // 7,
+                    "dayIndex": cell_day.weekday(),
+                    "isFuture": cell_day > current_day,
+                    "voiceSeconds": round(voice_seconds, 3),
+                    "usageCount": usage_count,
+                }
+                calendar_cells.append(cell)
+                month_cells.append(cell)
+                cell_day += timedelta(days=1)
+            month_blocks.append(
+                {
+                    "monthIndex": month_index,
+                    "label": f"{month_index + 1} 月",
+                    "weekCount": max(int(cell["weekIndex"]) for cell in month_cells) + 1,
+                    "cells": month_cells,
+                }
+            )
+
+        visible_calendar_cells = [cell for cell in calendar_cells if not cell["isFuture"]]
+        calendar_max_duration = max(
+            (float(cell["voiceSeconds"]) for cell in visible_calendar_cells), default=0
+        )
+        calendar_max_frequency = max(
+            (int(cell["usageCount"]) for cell in visible_calendar_cells), default=0
+        )
+        for cell in calendar_cells:
+            cell["durationLevel"] = _intensity(
+                float(cell["voiceSeconds"]), calendar_max_duration
+            )
+            cell["frequencyLevel"] = _intensity(
+                float(cell["usageCount"]), calendar_max_frequency
+            )
+            cell["durationText"] = format_duration(float(cell["voiceSeconds"]))
+            cell["frequencyText"] = f"{cell['usageCount']} 次"
+
         today_raw = days.get(current_day.isoformat(), {})
         today_buttons = _nonnegative_int(today_raw.get("button_presses", 0))
         today_sessions = _nonnegative_int(today_raw.get("voice_sessions", 0))
         today_seconds = _nonnegative_float(today_raw.get("voice_seconds", 0.0))
         return {
             "cells": cells,
+            "monthBlocks": month_blocks,
+            "yearLabel": str(current_day.year),
+            "currentMonthIndex": current_day.month - 1,
             "todayDuration": format_duration(today_seconds),
             "todayFrequency": f"{today_buttons + today_sessions} 次触发",
             "yearDuration": format_duration(float(totals["voice_seconds"])),

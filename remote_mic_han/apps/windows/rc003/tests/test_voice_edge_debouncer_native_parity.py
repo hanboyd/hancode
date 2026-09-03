@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest import mock
 from typing import List
 
 from ovb_rc003 import voice_edge_debouncer as py_mod
@@ -159,6 +160,40 @@ class VoiceEdgeDebouncerNativeParityTests(unittest.TestCase):
                     f"scenario {scenario.name!r}: "
                     f"python={py_trace!r} native={native_trace!r}",
                 )
+
+    def test_bridge_timer_consumes_cpp_pending_handler_once(self) -> None:
+        """The production bridge must fire through C++, not around it."""
+        from ovb_rc003 import voice_edge_debouncer_native as native_mod
+
+        created = []
+
+        class _FakeTimer:
+            def __init__(self, delay, callback) -> None:
+                self.delay = delay
+                self.callback = callback
+                self.daemon = False
+                self.started = False
+                self.cancelled = False
+                created.append(self)
+
+            def start(self) -> None:
+                self.started = True
+
+            def cancel(self) -> None:
+                self.cancelled = True
+
+        fired = []
+        with mock.patch.object(native_mod.threading, "Timer", _FakeTimer):
+            deb = native_mod.make_voice_edge_debouncer_native(0.2)
+            deb.on_release(lambda: fired.append("fired"))
+
+            self.assertEqual(len(created), 1)
+            self.assertTrue(created[0].started)
+            created[0].callback()
+
+            self.assertEqual(fired, ["fired"])
+            self.assertFalse(deb.fire_pending_now_for_test())
+            self.assertEqual(fired, ["fired"])
 
 
 if __name__ == "__main__":

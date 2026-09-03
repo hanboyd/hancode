@@ -24,6 +24,10 @@ built from the standalone ``src/launcher.py`` entry point - see XRBM-021):
                   build that produces an executable which cannot even be
                   launched is not caught by the PyInstaller build step
                   alone).
+- ``--qt-runtime-smoke``  HIDDEN build-time check that imports the actual
+                  PySide6 Qt runtime used by the settings window, but creates
+                  no window and touches no BLE/HID/audio device. This catches
+                  frozen-DLL failures that ``--dry-run`` deliberately cannot.
 - ``--diagnose-ble-candidates <result-path>``  HIDDEN, undocumented in
                   ``--help`` on purpose (XRBM-035 RETRY 1): the settings
                   window's "检查与修复" page's BLE candidate check
@@ -191,6 +195,27 @@ def _dry_run() -> int:
     return 0
 
 
+def _qt_runtime_smoke() -> int:
+    """Load the real Qt settings dependencies without creating a GUI.
+
+    ``_dry_run()`` intentionally stops before importing PySide6 so source-only
+    installations can still exercise the bridge. Candidate packaging needs a
+    second gate: it must prove the frozen process can load QtCore, QtGui, QML,
+    and Quick Controls before a user double-clicks the executable.
+    """
+
+    from . import qt_settings_app
+
+    qt_classes = qt_settings_app._load_qt_classes()
+    required = ("QGuiApplication", "QQmlApplicationEngine", "QQuickStyle")
+    missing = [name for name in required if name not in qt_classes]
+    if missing:
+        print(f"qt-runtime-smoke: missing settings classes: {', '.join(missing)}")
+        return 1
+    print("qt-runtime-smoke: PySide6 settings runtime loaded successfully")
+    return 0
+
+
 def _run_bridge() -> None:
     """No-argument bridge mode: guarded by the per-session single-instance
     mutex (XRBM-021 In-scope items 2-3). ``app.main()`` is only ever called
@@ -295,6 +320,8 @@ def main() -> None:
         return
     if "--dry-run" in args:
         raise SystemExit(_dry_run())
+    if "--qt-runtime-smoke" in args:
+        raise SystemExit(_qt_runtime_smoke())
     if "--diagnose-ble-candidates" in args:
         # XRBM-035 RETRY 1: hidden, undocumented child-process entry point -
         # see this module's own docstring. Always raises SystemExit from

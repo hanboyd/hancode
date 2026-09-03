@@ -33,7 +33,7 @@ std::size_t BoundedPcmQueue::size() const noexcept {
 }
 
 std::uint64_t BoundedPcmQueue::dropped_count() const noexcept {
-    return dropped_count_;  // u64; reads are atomic on every common arch
+    return dropped_count_.load(std::memory_order_relaxed);
 }
 
 bool BoundedPcmQueue::empty() const noexcept {
@@ -47,8 +47,23 @@ std::size_t BoundedPcmQueue::push(std::span<const std::int16_t> samples) noexcep
     }
     std::lock_guard<std::mutex> lk(m_);
 
-    // Drop oldest samples if the incoming batch would overflow.
     const std::size_t incoming = samples.size();
+    if (incoming >= capacity_) {
+        // The new batch alone fills (or exceeds) the queue. Retain its
+        // newest capacity_ samples and discard all older queued/input
+        // samples.  The previous implementation tried to erase
+        // incoming-available elements from buf_, which is out of range
+        // whenever an oversized batch arrives at a short/empty queue.
+        const std::size_t to_drop =
+            buf_.size() + (incoming - capacity_);
+        buf_.assign(
+            samples.end() - static_cast<std::ptrdiff_t>(capacity_),
+            samples.end());
+        dropped_count_.fetch_add(to_drop, std::memory_order_relaxed);
+        return to_drop;
+    }
+
+    // Drop oldest queued samples if the incoming batch would overflow.
     std::size_t available = capacity_ - buf_.size();
     std::size_t to_drop = 0;
     if (incoming > available) {
@@ -56,7 +71,7 @@ std::size_t BoundedPcmQueue::push(std::span<const std::int16_t> samples) noexcep
         // Erase the oldest `to_drop` samples from the front.
         buf_.erase(buf_.begin(),
                    buf_.begin() + static_cast<std::ptrdiff_t>(to_drop));
-        dropped_count_ += to_drop;
+        dropped_count_.fetch_add(to_drop, std::memory_order_relaxed);
     }
 
     // Append incoming samples. capacity_ is u32; this is bounded to
@@ -68,7 +83,7 @@ std::size_t BoundedPcmQueue::push(std::span<const std::int16_t> samples) noexcep
         const std::size_t overflow = buf_.size() - capacity_;
         buf_.erase(buf_.begin(),
                    buf_.begin() + static_cast<std::ptrdiff_t>(overflow));
-        dropped_count_ += overflow;
+        dropped_count_.fetch_add(overflow, std::memory_order_relaxed);
         to_drop += overflow;
     }
     return to_drop;

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(RemoteMicWindows VERSION 0.6.0 LANGUAGES CXX)
+project(RemoteMicWindows VERSION 1.0.0 LANGUAGES CXX)
 
 option(REMOTEMIC_BUILD_TESTS "Build hardware-free C++ tests" ON)
 option(REMOTEMIC_BUILD_PYTHON "Build the CPython binding extension" OFF)
@@ -229,6 +229,55 @@ add_library(remotemic_input STATIC
     src/input/frida_hid_tap_source.cpp
     src/input/send_input_action_sink.cpp
 )
+
+add_library(remotemic_app STATIC
+    src/app/application_coordinator.cpp
+    src/audio/windows_voice_audio_policy_lease.cpp
+)
+target_include_directories(remotemic_app PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_compile_features(remotemic_app PUBLIC cxx_std_20)
+if(WIN32)
+    target_link_libraries(remotemic_app PRIVATE ole32 propsys advapi32)
+endif()
+
+# Phase 9: Qt-independent state behind the unchanged PySide6/QML client.
+add_library(remotemic_ui STATIC
+    src/ui/settings_state.cpp
+)
+target_include_directories(remotemic_ui PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_compile_features(remotemic_ui PUBLIC cxx_std_20)
+if(MSVC)
+    target_compile_options(remotemic_ui PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_ui PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Phase 6: single-owner BLE/WinRT transport plus a hardware-free recording
+# double. Python keeps the already-validated enumeration/identity policy;
+# the selected device's GATT connection and callbacks have one native owner.
+add_library(remotemic_ble STATIC
+    src/ble/fake_ble_transport.cpp
+    src/ble/winrt_ble_transport.cpp
+)
+
+target_include_directories(remotemic_ble
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(remotemic_ble PUBLIC remotemic_core)
+if(WIN32)
+    target_link_libraries(remotemic_ble PRIVATE windowsapp)
+endif()
+target_compile_features(remotemic_ble PUBLIC cxx_std_20)
+if(MSVC)
+    target_compile_options(remotemic_ble PRIVATE /W4 /permissive- /EHsc /utf-8)
+else()
+    target_compile_options(remotemic_ble PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
 target_include_directories(remotemic_input
     PUBLIC
@@ -584,6 +633,45 @@ if(REMOTEMIC_BUILD_TESTS)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     )
 
+    add_executable(remotemic_fake_ble_transport_tests tests/unit/test_fake_ble_transport.cpp)
+    target_link_libraries(remotemic_fake_ble_transport_tests PRIVATE remotemic_ble)
+    if(MSVC)
+        target_compile_options(remotemic_fake_ble_transport_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_fake_ble_transport_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_fake_ble_transport_tests COMMAND remotemic_fake_ble_transport_tests)
+    set_tests_properties(remotemic_fake_ble_transport_tests PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS "phase6;ble;unit"
+    )
+
+    add_executable(remotemic_application_coordinator_tests
+        tests/unit/test_application_coordinator.cpp)
+    target_link_libraries(remotemic_application_coordinator_tests PRIVATE
+        remotemic_app remotemic_session remotemic_voice remotemic_audio
+        remotemic_input remotemic_ble)
+    if(MSVC)
+        target_compile_options(remotemic_application_coordinator_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_application_coordinator_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_application_coordinator_tests
+        COMMAND remotemic_application_coordinator_tests)
+
+    add_executable(remotemic_ui_settings_state_tests
+        tests/unit/test_ui_settings_state.cpp)
+    target_link_libraries(remotemic_ui_settings_state_tests PRIVATE remotemic_ui)
+    if(MSVC)
+        target_compile_options(remotemic_ui_settings_state_tests PRIVATE /W4 /permissive- /EHsc /utf-8)
+    else()
+        target_compile_options(remotemic_ui_settings_state_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME remotemic_ui_settings_state_tests
+        COMMAND remotemic_ui_settings_state_tests)
+    set_tests_properties(remotemic_ui_settings_state_tests PROPERTIES
+        LABELS "phase9;ui;unit")
+
     if(REMOTEMIC_BUILD_PYTHON)
         add_test(
             NAME remotemic_bind_smoke
@@ -774,6 +862,19 @@ if(REMOTEMIC_BUILD_TESTS)
             ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         )
 
+        add_test(
+            NAME remotemic_ble_transport_bind_smoke
+            COMMAND ${Python3_EXECUTABLE} -m unittest discover
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/tests/bind"
+                -p "test_ble_transport_bind_smoke.py"
+                -v
+        )
+        set_tests_properties(remotemic_ble_transport_bind_smoke PROPERTIES
+            ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+            LABELS "phase6;ble;binding"
+        )
+
         # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
         # (G5). Each runs identical scripts through both the python
         # baseline and the C++ binding (via the bridge wrappers) and
@@ -926,6 +1027,48 @@ if(REMOTEMIC_BUILD_TESTS)
         )
         set_tests_properties(remotemic_phase5_input_production_routing PROPERTIES
             ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+        )
+
+        add_test(
+            NAME remotemic_phase6_ble_native_switch
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase6_ble_native_switch.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase6_ble_native_switch PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+            LABELS "phase6;ble;switch"
+        )
+
+        add_test(
+            NAME remotemic_phase8_native_default
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase8_native_default.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase8_native_default PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+            LABELS "phase8;routing;rollback"
+        )
+
+        add_test(
+            NAME remotemic_phase9_ui_native_state
+            COMMAND ${Python3_EXECUTABLE} ${_REMOTEMIC_PARITY_HELPER}
+                -m unittest
+                -s "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003/tests"
+                -t "${CMAKE_CURRENT_SOURCE_DIR}/apps/windows/rc003"
+                -p "test_phase9_ui_native_state.py"
+                -v
+        )
+        set_tests_properties(remotemic_phase9_ui_native_state PROPERTIES
+            ENVIRONMENT "${_REMOTEMIC_PARITY_ENV}"
+            LABELS "phase9;ui;routing"
         )
 
         # Phase 3 / ADR-0013 step 4: runtime shadow parity tests
@@ -1088,7 +1231,7 @@ if(REMOTEMIC_BUILD_PYTHON)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/remotemic_native"
     )
-    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm remotemic_voice remotemic_session remotemic_audio remotemic_input pybind11::pybind11)
+    target_link_libraries(remotemic_native_c PRIVATE remotemic_bind remotemic_atvv remotemic_adpcm remotemic_voice remotemic_session remotemic_audio remotemic_input remotemic_ble remotemic_app remotemic_ui pybind11::pybind11)
 
     # Copy the public Python wrapper next to the compiled _C.pyd so the
     # build directory is a drop-in importable package.

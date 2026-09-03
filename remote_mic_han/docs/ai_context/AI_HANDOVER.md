@@ -1,5 +1,322 @@
 # AI Handover
 
+## Active handover — 2026-09-03: package first usable release as 1.0.0
+
+- The user explicitly selected `1.0.0`, not `0.8.0`, for the first usable
+  release after the incremental C++ refactor. Describe it accurately as a
+  hybrid release: normal users remain on the real-device-accepted Python
+  coordinator; the native coordinator is an explicit diagnostic opt-in.
+- The freshly rebuilt frozen program passed real RC003 + VB-CABLE + Typeless
+  acceptance before the version-only rebuild: one shortcut around 75 ms after
+  each voice-key edge, signal-bearing PCM, and no false second trigger.
+- Back -> Delete, Volume Up -> Ctrl+C, and Volume Down -> Ctrl+V are a recorded
+  non-blocking known issue. The saved mappings are present. Both the current
+  and quarantined prior packages failed in the present Windows state because
+  the optional HID tap did not connect and verified WUDFHost access returned
+  WinError 5. The user explicitly deferred repair until after packaging.
+- Qianwen and native WASAPI audibility remain deferred and must not be included
+  in the 1.0.0 acceptance claim. The build is unsigned.
+- Final artifacts are under `apps/windows/rc003/dist/release-1.0.0`:
+  installer SHA-256 `0e1b3c18f6d8af99ea3d83097e6dd677a787a588619c9764f5c1a7ca3da708eb`;
+  portable ZIP SHA-256
+  `8f41f94187bdaf1e00e6c680ab22a3cf3c76ed5e3977c65926a9a9e0bdab8bd1`.
+  Silent install returned 0; installed executable and uninstall registration
+  both report 1.0.0, and the old frozen `app` subtree is absent.
+- The user subsequently accepted the installed 1.0.0 as the formal program
+  for current personal use. Short Typeless use was normal and did not reproduce
+  the prior missed-open or spontaneous post-release reopen symptoms. Keep the
+  existing deferred boundaries explicit; do not reinterpret this as Qianwen,
+  native WASAPI, or Back/Volume-key acceptance.
+
+## Active handover — 2026-09-03: packaged Typeless path accepted
+
+- The first usable `0.8.0-candidate` PyInstaller build passed a real RC003 +
+  VB-CABLE + Typeless run on the release-default Python coordinator. Press
+  opened Typeless, release closed the input, PCM contained signal, both host
+  shortcut dispatches were approximately 76-77 ms after their physical edges,
+  and no uncommanded second trigger appeared after release.
+- The apparent package failure immediately before the passing run was a live
+  configuration mismatch: RemoteMic sent `RightAlt`, while Typeless expected
+  `LeftCtrl+LeftAlt`. RemoteMic now uses `lctrl+lalt`; the user independently
+  restored Typeless to the same shortcut and selected `CABLE Output`.
+- The accepted packaged bridge was launched only after the source bridge
+  stopped cleanly. It remains the active usable process at handover unless the
+  operator has since stopped it.
+- Qianwen and native `WasapiAudioRoute` audibility remain explicitly deferred.
+  Do not fold either into the acceptance claim.
+- The installer/portable artifacts are unsigned. Install, uninstall, expected
+  user-data retention, clean reinstall and the final installed-build Typeless
+  run all passed on this machine.
+- Final candidate files are grouped under
+  `apps/windows/rc003/dist/release-0.8.0-candidate`. The installer SHA-256 is
+  `B2ADAB04A98A494EE4814E3E8F872E6F9790A6BEE660EE3D939FC1C0CA2FE2B1`; the
+  portable ZIP SHA-256 is
+  `FD16D2504E9E2EDF8737C5C7F289EC8548038B4377CDE24578ACC3AB18CB779A`.
+  Inno compilation is warning-free and the packaging contract suite passed
+  116/116. Silent install returned 0; uninstall removed process, registration,
+  program files and shortcuts while preserving configuration and key bindings;
+  clean reinstall returned 0 and passed the final RC003 + Typeless run. The
+  files remain unsigned. The final installer was repacked afterward only to
+  update its bundled readme with these results; application bytes and
+  installer logic are unchanged.
+
+## Active handover — 2026-09-03: first usable release path pinned
+
+- Default `application_coordinator` is now `python`; this is the real RC003 +
+  Typeless accepted path and no longer requires an environment override.
+- Native coordinator remains available only when explicitly selected with
+  `REMOTEMIC_NATIVE_CHOICE_APPLICATION_COORDINATOR=native`. Its WASAPI silence
+  and Qianwen integration are intentionally deferred by user direction; do not
+  silently re-enable either for the first usable release.
+- ADR-0018 was amended rather than deleting native code or its tests. Focused
+  routing/entry tests passed 34 tests with 2 binding-environment skips; the
+  full package-level Python suite passed 1090 tests with 21 skips.
+- This default was subsequently exercised through both a source restart and
+  the packaged build; both passed the real RC003 + Typeless path. See the
+  newer active handover above.
+- Git inspection and any future commit must be restricted to this repository
+  worktree directory; do not include sibling paths from a wider Git root.
+
+## Active handover — 2026-09-03: Typeless timing/retrigger fix accepted
+
+This section supersedes the older active handovers for the immediate voice-key
+task. The working tree still contains substantial unrelated, uncommitted
+Phase 6–9 work; preserve it and do not reset, clean, rebase, or overwrite it.
+
+Current proven product path:
+
+- Launch with `REMOTEMIC_NATIVE_CHOICE_APPLICATION_COORDINATOR=python` and
+  `PYTHONPATH=apps\windows\rc003\src;build\Release` (ordering equivalent is
+  acceptable as long as both the source package and `_C.pyd` resolve).
+- Physical F5 down and up are the only Typeless toggle owners. Each edge is
+  queued with a monotonic timestamp, and the voice-edge worker begins one
+  complete Typeless shortcut at edge + 75 ms. Auto-repeat does nothing;
+  ATVV control/audio events cannot toggle Typeless without the physical latch.
+
+Root cause and correction:
+
+- F5 was incorrectly entering the generic Raw Input correlation wait even
+  though F5 is deliberately never armed there. The serialized low-level hook
+  waited 62–78 ms on every long-hold repeat, creating a repeat backlog that
+  survived KeyUp, delayed the closing shortcut, and produced a false new press.
+- `LegacyKeySuppressor.consume_armed_key_event()` now returns immediately for
+  F5, leaving F5 to the dedicated voice suppressor/state latch. The attempted
+  800 ms post-release window was removed because live evidence showed a
+  retrigger after it expired and because it could suppress a valid rapid press.
+
+Evidence:
+
+- Before fix: KeyUp `06:25:37.769`; closing tap completed
+  `06:25:38.422`; queued repeats continued; a false new press was accepted at
+  `06:25:38.608`; unauthorized third tap completed `06:25:39.179`.
+- After fix: press dispatch 78 ms after its F5 edge; release dispatch 76 ms
+  after KeyUp; the full 70 ms closing chord completed 151 ms after KeyUp; PCM
+  had signal; no later F5/shortcut/audio-start appeared in the observation
+  window. The user confirmed normal press timing and no post-release Typeless
+  reopening without another voice-key press. Mark this RC003 + Typeless row
+  `passed`, not merely software-verified.
+- Software: the focused 76-test set passed three consecutive runs (1 skip per
+  run). The expanded `test_app_wiring`, `test_voice_controller`,
+  `test_atvv_session`, `test_ble_transport_contract`, and
+  `test_legacy_key_suppressor` set passed 137 tests with 1 environment skip.
+  The correct package-level `python -m unittest` full suite passed 1090 tests
+  with 21 environment skips. A prior bare discovery invocation produced two
+  collection errors because it removed the `tests` package context; that
+  invocation is not a product-test failure and was superseded by the passing
+  package-level run.
+
+Important timing interpretation:
+
+- The code controls a 75 ms scheduling target from low-level F5 callback to
+  the start of the Typeless chord. Windows/Python scheduling is not hard real
+  time; the accepted run measured 76–78 ms. `send_voice_key_combo_tap()` then
+  intentionally holds the chord for 70 ms before releasing it.
+
+Next safe work:
+
+1. Keep the bridge on the Python coordinator while the native WASAPI route is
+   silent. Do not silently switch the accepted product back to native.
+2. If continuing the native track, isolate `WasapiAudioRoute` audibility with
+   its existing diagnostics; do not change this accepted input path unless a
+   regression supplies new evidence.
+3. Packaging remains deferred/prohibited by the existing project direction.
+
+## Active handover — 2026-09-02 evening: acceptance passes on the Python rollback
+
+This section supersedes the older active handovers. The working tree is
+intentionally uncommitted Phase 6/7/8/9 work plus this session's fixes;
+do not reset, clean, rebase, or overwrite unrelated files.
+
+What this session established:
+
+- The two-state-machine key design (physical hold -> Typeless toggle taps)
+  is verified correct on real hardware. The final untested edit
+  (external voice-edge/host-action ownership on the native worker) is
+  the right key logic; its only failure was audio.
+- The native coordinator's audio route (`WasapiAudioRoute`) is silent on
+  this machine. Evidence chain: "audio start failed: already started"
+  (route never closed after a hold -> every later start failed -> all
+  frames dropped) was fixed; then COM MTA init on the BLE dispatcher
+  thread fixed CO_E_NOTINITIALIZED; GetMixFormat negotiation (48 kHz
+  stereo float32), float32 conversion, channel duplication, device-paced
+  writer (0 errors) and session volume 1.0 were all verified — yet a
+  simultaneous PortAudio stream on the same CABLE endpoint is audible
+  while the native session is not. Root cause unidentified. Diagnostic
+  getters exist on the binding (`last_error`, `matched_endpoint_id`,
+  `mix_channels`, `mix_bits_per_sample`, `mix_is_float`,
+  `session_volume_info`, `chunks_pushed_count`, `output_sample_rate_hz`).
+- The product currently works end-to-end via the ADR-0018 rollback:
+  launch the bridge with
+  `REMOTEMIC_NATIVE_CHOICE_APPLICATION_COORDINATOR=python` and PYTHONPATH
+  `build\Release;apps\windows\rc003\src`. Real acceptance with this path:
+  press opens Typeless once, holds of 35-50 s stream PCM, release sends
+  the closing toggle promptly, Typeless commits text at the focused
+  window after its own 20-25 s finalization (third-party latency, not
+  app-controllable), no Notepad date/time, repeated rounds clean,
+  graceful stop exits in ~1 s.
+- Native-side fixes kept for the next attempt: coordinator closes the
+  audio route on release, tolerates fragmented AudioStarted, Error events
+  no longer trigger reconnect (a reconnect stops the F5 guard -> the
+  observed date/time leak), the voice-edge worker uses a stop event (no
+  sentinel), survives native-call exceptions, and skips the close tap
+  when the open tap failed.
+- Tests: extended `tests/unit/test_application_coordinator.cpp` with the
+  external-owner scenario (Debug+Release pass); 4 new voice-edge-worker
+  tests in `apps/windows/rc003/tests/test_phase7_coordinator_routing.py`
+  (12/12); targeted ctest 4/4. Python source unchanged for the baseline
+  app itself this session.
+
+Next session priorities:
+
+1. Identify why the native WASAPI session is silent while PortAudio on the
+   same endpoint is audible (tone-probe scripts were scratch files under
+   the temp dir; the diagnostic getters above are the reproducible entry
+   point). If it cannot be fixed quickly, formally pin the Python
+   coordinator for this release cycle per ADR-0018.
+2. Real acceptance already passed on the Python path; do not re-test the
+   whole matrix unless a voice/audio source file changes.
+3. Update CURRENT_STATUS.md and this file before switching models.
+4. Packaging remains prohibited. Music ducking remains deferred.
+
+## Active handover — 2026-09-02 Typeless physical-edge correction
+
+This section supersedes the older active handover for the immediate task.
+The working tree is intentionally uncommitted and contains substantial prior
+Phase 6/7/8/9 work. Preserve it; do not reset, clean, rebase, or overwrite
+unrelated files.
+
+The required behavior is two coupled but different state machines:
+
+1. RC003 voice hardware is hold-to-talk: physical down opens the remote mic,
+   repeats while held are ignored, physical up closes the remote mic.
+2. Typeless is toggle-on-shortcut: physical down sends one complete shortcut
+   tap to open; physical up sends a second complete shortcut tap to close and
+   commit text.
+
+Latest human evidence before the final edit:
+
+- passed: Notepad did not receive date/time (physical F5 leak suppressed);
+- passed: direction keys move exactly one character per press;
+- failed: Typeless stayed closed throughout a long hold, opened only on
+  release, then closed on the next voice-key press;
+- deferred by instruction: music ducking;
+- prohibited: packaging/installer work.
+
+The final code edit, intentionally not tested at the user's request:
+
+- `application_coordinator_native.py` now takes authoritative down/up from the
+  suppressed low-level-hook F5 callback, collapses auto-repeat, applies the
+  existing 200 ms release debounce, and serializes edges on
+  `native-voice-edge-worker`.
+- That worker now calls `win32_input.send_voice_key_combo_tap()` **before** it
+  calls `ApplicationCoordinator.handle_physical_mic_edge()`. This keeps the
+  Typeless toggle outside the native BLE/audio mutex that delayed it until
+  release in the real run.
+- Native `CoordinatorConfig` has `external_voice_edge_owner` and
+  `external_voice_host_action_owner`. The Windows binding sets both true.
+  Raw Input and ATVV are no longer allowed to own the physical mic lifecycle,
+  and C++ must not send a duplicate Typeless shortcut.
+- `RawInputSource` now drains live events instead of retaining them until
+  shutdown. `ApplicationCoordinator::stop()` releases the mutex before joining
+  the input pump, addressing the observed stop hang.
+
+Receiver procedure:
+
+1. Read `AGENTS.md`, `docs/ai_context/INDEX.md`, `PROJECT_CONTEXT.md`,
+   `CURRENT_STATUS.md`, this file, ADR-0017/0018/0020, and inspect
+   `git status --short` plus the focused diff before editing.
+2. Restate the two-state-machine contract above. Do not redesign it and do not
+   switch back to ATVV timing as the host-toggle owner.
+3. Review the final untested diff first, especially worker lifecycle, shortcut
+   failure rollback, reconnect queue state, native voice-controller state, and
+   shutdown ordering. Make the smallest corrective changes needed.
+4. Build and run only the smallest relevant automated checks first. Then ask
+   for one real Notepad/Typeless hold test: down opens immediately once; hold
+   stays open and records audio; up closes once and commits; no date/time.
+5. Record real hardware results as passed/failed/deferred. Do not infer success
+   from builds or process state. Do not package.
+
+Last automated evidence predates the final host-shortcut-owner edit: targeted
+CTest Debug 5/5, Release 5/5, Python 83 passed / 3 skipped / 1 unrelated
+Python-3.14-specific test deselected. The final edit is `unverified`.
+
+## Active handover — 2026-09-02, Codex
+
+The active source base is `8fb6506` plus the current uncommitted Phase 6/7/8/9 working tree. Phase 6, Phase 7 coordinator source, the Phase 8 native-default source switch, and the Phase 9 copied UI/native-state route are implemented. Do not restart them from the older YAML snapshot below.
+
+- ADR-0020 closes the code-owned parts of three reported bugs. Default
+  direction/OK identity mappings now use one physical owner. The native voice
+  coordinator acquires `WindowsVoiceAudioPolicyLease` before the host hotkey,
+  temporarily selecting CABLE Output for all capture roles and ducking mode
+  `Do nothing`, then restoring on voice stop/disconnect/shutdown.
+- Local integration evidence: synthetic CABLE loopback passed
+  (`peak=0.141422`, `rms=0.026593`); normal lease restore passed; forced-exit
+  recovery restored a missing ducking value and removed the marker. Final
+  registry state contains neither marker nor ducking override.
+- Current regression: 51/51 CTest Debug and Release, 1107 Python tests with 7
+  skipped, 400-file public-boundary scan, `git diff --check`. Hardware/target
+  application acceptance remains deferred; custom remap suppression still has
+  the existing Hook/Raw Input device-identification limitation.
+
+- Phase 9 chose the retained-QML route in ADR-0019. All seven QML files are
+  byte-identical to the accepted UI and protected by the copy-contract hash
+  fixture. `UiSettingsState` now owns the connection/mapping selection state
+  in C++; PySide6 remains the rendering, model-notification and OS-adapter client.
+- Phase 9 verification passed: 51/51 CTest Debug, 51/51 CTest Release,
+  1105 Python tests (7 skipped), 400-file public-boundary scan and
+  `git diff --check`. Source-only fallback without `_C.pyd` also passed.
+
+- Phase 8 source candidate now defaults `application_coordinator` to native and
+  bumps source metadata to `0.8.0-candidate`. The complete rollback is
+  `REMOTEMIC_NATIVE_CHOICE_APPLICATION_COORDINATOR=python`; shadow and silent
+  native-binding fallback fail closed. See ADR-0018 and
+  `test_phase8_native_default.py`.
+- Phase 8 source verification passed: 49/49 CTest Debug, 49/49 CTest Release,
+  1100 Python tests (7 skipped), 395-file public-boundary scan and
+  `git diff --check`. Direct construction selected `NativeCoordinatorApp` by
+  default and `RC003App` under the rollback override. A Release-only test UB
+  in `test_edge_debouncer.cpp` was fixed by removing the post-destruction raw
+  pointer read.
+- Packaging is still prohibited by the user's current instruction. Installer
+  metadata was not changed and no frozen, portable or installer artifact was
+  created. Keep the Python core and behavior fixtures for at least one stable
+  release cycle.
+
+- Added the C++/WinRT BLE transport, bounded callback mailbox, fake transport, pybind11 seam, Python native session bridge, production routing, unit/binding/switch tests, and accepted ADR-0016.
+- Fixed typed native ATVV event conversion and deterministic native-binding shutdown; also closed four pre-existing full-suite blockers exposed by the release build.
+- Phase 7 added ADR-0017, `ApplicationCoordinator`, numbered idempotent commands, rollback/cleanup, C++ event mailbox, pybind API, `NativeCoordinatorApp`, existing supervisor integration, and Python gesture/binding/statistics adapter routing for ordinary input events.
+- Phase 0–5 corrective audit completed after the Phase 7 source work. Corrected Phase 2 FIR sample drift and DC argument parity; Phase 3 stale debounce pending state plus CAPS/8 kHz rejection ABI; Phase 4 oversized queue UB/counter races/lifecycle/capacity/fallback; and Phase 5 input logging plus host-action fallback/dispatch/teardown accounting. Regression tests were added for every reproduced defect.
+- Evidence after the corrective audit: 48/48 Debug CTest, 48/48 Release CTest, 1095 Python tests passed (7 skipped), and the 393-file public-boundary scan passed. `git diff --check` passed.
+- Real RC003 evidence: discovery and identity selection passed; native connection, control notification, `GET_CAPS` write, cleanup, and two reconnect cycles passed; dropped native mailbox events remained zero. Audio notification is deferred because nobody was present to press the voice key.
+- Packaging is explicitly deferred. A disposable freeze check exited 0 and proved `_C.pyd` collection, after which `dist` and `build/pyinstaller-work` were deleted. Do not rebuild an installer, portable ZIP, or frozen release until all code phases and the joint review are complete.
+- Real Phase 7 bridge entry passed native start plus external stop/cleanup with exit 0; direct hardware smoke observed events and zero drops. Physical voice/audio, Typeless/Qianwen response and sleep/wake remain deferred because they were not observed.
+- Do not recreate package artifacts yet. Next work is verification of the Phase
+  8 source switch plus remaining real-interaction acceptance when a human is
+  available. Phase 0–5 automated corrective audit is complete; do not revert
+  its regression coverage.
+
+The older YAML handover is retained below for detailed Phase 0–5 provenance; its Phase 6 entry instruction is superseded by this section.
+
 ```yaml
 last_updated: 2026-09-01T05:30:00+08:00
 agent: sonnet handing off to next agent

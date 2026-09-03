@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <span>
+#include <string>
 
 namespace remotemic {
 
@@ -44,6 +45,10 @@ public:
     // Release device handles. Idempotent. Implies stop(). After close()
     // write() must return false.
     virtual void close() noexcept = 0;
+
+    // Human-readable reason for the last start() failure ("" when the last
+    // start succeeded or has not been called). Diagnostic surface only.
+    [[nodiscard]] virtual std::string last_error() const { return {}; }
 };
 
 } // namespace remotemic

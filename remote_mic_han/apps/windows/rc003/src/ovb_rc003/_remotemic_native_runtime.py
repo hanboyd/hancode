@@ -1,12 +1,10 @@
 """Phase 1 migration scaffold (ADR-0011): module-level implementation
 choice for the C++ / CPython coexistence and fallback framework.
 
-This file is the *framework* only. No real product module is migrated
-here; per migration plan section 1 rule 4 every known module keeps the
-``"python"`` default until phase 8. Phase 2 will be the first module
-that opts into ``"shadow"`` (ATVV capability parsing / ADPCM decoding)
-because it is the side-effect-free compute path the roadmap explicitly
-calls out.
+This file owns the product-wide rollback policy for the staged migration.
+The first usable release defaults to the proven Python application coordinator.
+The C++ coordinator remains available behind an explicit ``native`` opt-in
+while its WASAPI route is silent on the acceptance machine.
 
 Public API:
 
@@ -21,8 +19,7 @@ Override sources, in lookup order:
 1. Environment variable ``REMOTEMIC_NATIVE_CHOICE_<MODULE_NAME>``
    (uppercased module name, value one of ``python`` / ``native`` /
    ``shadow``).
-2. The internal default policy table (currently empty - everything is
-   ``python`` until phase 2 explicitly opts in).
+2. The internal default policy table.
 3. ``"python"`` - the authoritative fallback for the entire migration
    window per plan section 1 rule 4.
 """
@@ -36,8 +33,9 @@ ImplementationChoice = Literal["python", "native", "shadow"]
 
 T = TypeVar("T")
 
-# Default policy. Empty by design: every module is "python" until an
-# explicit opt-in is added here (or via env var) for that module.
+# Default policy. Phase 8 changes only the top-level coordinator. Keeping the
+# lower-level defaults on Python is deliberate: an explicit coordinator
+# rollback must restore the established Python ownership graph as a unit.
 #
 # ``atvv_protocol`` is the first side-effect-free compute module to
 # register (Phase 2 / Area 1, ADR-0012 §6). The default stays
@@ -64,6 +62,24 @@ _DEFAULT_CHOICES: dict[str, ImplementationChoice] = {
     # device handle) per plan §3 rule 5, so ``shadow`` is intentionally
     # not exposed; parity harness in step 4 uses FakeAudioRoute.
     "audio_route": "python",
+    # Phase 5 side-effecting input/action owners. Their fake adapters
+    # provide parity coverage; production shadow remains forbidden.
+    "input_source": "python",
+    "host_action_sink": "python",
+    # Phase 6: side-effecting GATT owner. No shadow mode; native is opt-in
+    # until the release-candidate default flips in Phase 8.
+    "ble_transport": "python",
+    # ADR-0018 amendment (2026-09-03): real RC003 + Typeless acceptance passed
+    # only through the Python coordinator because the native WASAPI route is
+    # silent on the acceptance machine. Keep native as an explicit diagnostic
+    # opt-in; the usable release must not require an environment-variable
+    # rollback to reach its proven path. ``shadow`` remains forbidden because
+    # a lifecycle owner is side-effecting.
+    "application_coordinator": "python",
+    # Phase 9: side-effect-free settings-window state. The QML/PySide6
+    # client remains unchanged; an explicit python override is retained for
+    # source runs without a compiled extension.
+    "ui_settings_state": "native",
 }
 
 _ENV_PREFIX = "REMOTEMIC_NATIVE_CHOICE_"

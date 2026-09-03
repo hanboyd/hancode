@@ -29,6 +29,7 @@ corrective fix pattern from commit 5ce9bd5.
 from __future__ import annotations
 
 import os
+import types
 import unittest
 from typing import List
 
@@ -217,7 +218,11 @@ class NativeSwitchAndFakeBackendTests(unittest.TestCase):
         import remotemic_native as _rn
 
         original = getattr(_rn, "VoiceController", None)
+        original_mode = getattr(_rn, "VoiceTriggerMode", None)
+        original_available = _rn._C_AVAILABLE
         _FakeVoiceController.instances.clear()
+        _rn._C_AVAILABLE = True
+        _rn.VoiceTriggerMode = types.SimpleNamespace(Hold="Hold", Toggle="Toggle")
         _rn.VoiceController = _FakeVoiceController  # type: ignore[assignment]
         try:
             from ovb_rc003.voice_controller_native import (
@@ -235,6 +240,8 @@ class NativeSwitchAndFakeBackendTests(unittest.TestCase):
                 ["on_mic_button_pressed"],
             )
         finally:
+            _rn._C_AVAILABLE = original_available
+            _rn.VoiceTriggerMode = original_mode
             if original is None:
                 del _rn.VoiceController
             else:
@@ -244,7 +251,9 @@ class NativeSwitchAndFakeBackendTests(unittest.TestCase):
         import remotemic_native as _rn
 
         original = getattr(_rn, "AtvvSession", None)
+        original_available = _rn._C_AVAILABLE
         _FakeAtvvSession.instances.clear()
+        _rn._C_AVAILABLE = True
         _rn.AtvvSession = _FakeAtvvSession  # type: ignore[assignment]
         try:
             from ovb_rc003.atvv_session_native import (
@@ -253,11 +262,16 @@ class NativeSwitchAndFakeBackendTests(unittest.TestCase):
             shim = make_atvv_session_native()
             self.assertEqual(len(_FakeAtvvSession.instances), 1)
             event = shim.handle_control(b"\x08")
-            self.assertEqual(event, {"opcode": "Unknown", "raw_opcode": 0x08})
+            # Native shim now restores the public Python event ABI instead of
+            # leaking the private binding dict into app.py's isinstance-based
+            # dispatcher.
+            self.assertIsInstance(event, py_atvv.UnknownControl)
+            self.assertEqual(event.opcode, 0x08)
             self.assertIn(
                 "handle_control", _FakeAtvvSession.instances[0].calls
             )
         finally:
+            _rn._C_AVAILABLE = original_available
             if original is None:
                 del _rn.AtvvSession
             else:

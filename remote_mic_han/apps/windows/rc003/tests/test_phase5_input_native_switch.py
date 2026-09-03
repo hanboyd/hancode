@@ -26,6 +26,7 @@ from __future__ import annotations
 import importlib
 import os
 import unittest
+from unittest import mock
 
 
 _INPUT_SOURCE_KEY = "REMOTEMIC_NATIVE_CHOICE_INPUT_SOURCE"
@@ -135,6 +136,24 @@ class InputSourceNativeSwitchTests(_NativeSwitchBase):
         with self.assertRaises(RuntimeError):
             _reload_input_source_module()
 
+    def test_native_registration_failure_logs_without_name_error(self) -> None:
+        mod = importlib.import_module("ovb_rc003.input_source_native")
+        import remotemic_native as rn
+
+        class _RejectingSource:
+            def set_event_sink(self, sink) -> None:
+                raise RuntimeError("rejected")
+
+            def stop(self) -> None:
+                return None
+
+        with mock.patch.object(rn, "_C_AVAILABLE", True), \
+             mock.patch.object(rn, "RawInputSource", _RejectingSource,
+                               create=True):
+            source = mod._NativeInputSource("device")
+            source.set_event_sink(lambda event: None)
+            self.assertIsInstance(source._registration_error, RuntimeError)
+
 
 class HostActionSinkNativeSwitchTests(_NativeSwitchBase):
     """Native switch tests for
@@ -204,6 +223,40 @@ class HostActionSinkNativeSwitchTests(_NativeSwitchBase):
         os.environ[_HOST_ACTION_SINK_KEY] = "shadow"
         with self.assertRaises(RuntimeError):
             _reload_host_action_sink_module()
+
+    def test_missing_extension_fallback_submits_with_numeric_deadline(self) -> None:
+        mod = importlib.import_module(
+            "ovb_rc003.host_action_sink_native"
+        )
+        import remotemic_native as rn
+
+        delivered = []
+        with mock.patch.object(rn, "_C_AVAILABLE", False), \
+             mock.patch.object(
+                 mod.py_win32_input,
+                 "_real_send_input_batch",
+                 side_effect=lambda events: delivered.extend(events) or 1,
+             ):
+            sink = mod._make_host_action_sink_native()
+            self.assertTrue(sink.submit_key(0x41, True, 50))
+
+        self.assertEqual(delivered, [(0x41, False)])
+
+    def test_python_system_action_names_reach_existing_helpers(self) -> None:
+        mod = importlib.import_module(
+            "ovb_rc003.host_action_sink_native"
+        )
+        called = []
+        with mock.patch.object(
+            mod.py_win32_input,
+            "send_escape",
+            side_effect=lambda: called.append("escape"),
+        ):
+            sink = mod._make_host_action_sink_python()
+            self.assertTrue(
+                sink.submit_system_action(mod._PythonSystemAction.Escape)
+            )
+        self.assertEqual(called, ["escape"])
 
 
 if __name__ == "__main__":

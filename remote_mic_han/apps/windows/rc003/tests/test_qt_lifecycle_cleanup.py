@@ -73,6 +73,14 @@ def _has_pyside6() -> bool:
 class NoResourceWarningAtShutdownTests(unittest.TestCase):
     def test_full_test_suite_command_produces_no_resourcewarning_at_shutdown(self):
         env = dict(os.environ)
+        # Other native-switch tests intentionally mutate these variables to
+        # exercise import-time dispatch. Test discovery order must not leak a
+        # preceding test's ``shadow``/``native`` choice into this independent
+        # full-suite subprocess (side-effecting modules correctly reject
+        # shadow at import). The production CI process also starts clean.
+        for key in tuple(env):
+            if key.startswith("REMOTEMIC_NATIVE_CHOICE_"):
+                env.pop(key, None)
         env["PYTHONPATH"] = str(_RC003_ROOT / "src")
         env.setdefault("QT_QPA_PLATFORM", "offscreen")
         env["QML_DISABLE_DISK_CACHE"] = "1"

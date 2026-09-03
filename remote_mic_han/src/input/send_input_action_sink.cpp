@@ -33,6 +33,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -61,6 +62,7 @@ constexpr std::uint16_t kVkApps  = 0x5D;
 constexpr std::uint16_t kVkEscape = 0x1B;
 constexpr std::uint16_t kVkTab    = 0x09;
 constexpr std::uint16_t kVkD      = 0x44;
+constexpr std::uint64_t kVoiceEventExtraInfo = 0x524D494352433033ULL;
 
 // Extended keys per win32_input.py:_EXTENDED_KEYS.
 bool IsExtendedKey(std::uint16_t vk) noexcept {
@@ -93,7 +95,7 @@ std::pair<WORD, bool> PhysicalScanCode(std::uint16_t vk) noexcept {
         case kVkRAlt:  return {static_cast<WORD>(0x38), true};
         case kVkLWin:  return {static_cast<WORD>(0x5B), true};
         case kVkRWin:  return {static_cast<WORD>(0x5C), true};
-        default:       return {0, false};
+        default:       return {static_cast<WORD>(0), false};
     }
 }
 
@@ -104,7 +106,8 @@ struct ScancodeRecord {
 };
 
 // Build one INPUT per event. Returns false if memory exhausted.
-bool AppendInput(std::vector<INPUT>& out, std::uint16_t vk, bool key_up) {
+bool AppendInput(std::vector<INPUT>& out, std::uint16_t vk, bool key_up,
+                 bool mark_voice_event) {
     INPUT in{};
     in.type = INPUT_KEYBOARD;
     auto& ki = in.ki;
@@ -128,19 +131,26 @@ bool AppendInput(std::vector<INPUT>& out, std::uint16_t vk, bool key_up) {
     }
     ki.dwFlags = flags;
     ki.time = 0;
-    ki.dwExtraInfo = 0;
+    ki.dwExtraInfo = mark_voice_event
+        ? static_cast<ULONG_PTR>(kVoiceEventExtraInfo)
+        : 0;
     out.push_back(in);
     return true;
 }
 
 // Dispatches a batch of events through user32.SendInput. Returns the
 // number of inputs accepted by Windows (may be < events.size()).
-UINT SendInputBatch(const std::vector<std::pair<std::uint16_t, bool>>& events) {
+UINT SendInputBatch(
+    const std::vector<std::pair<std::uint16_t, bool>>& events,
+    const std::vector<std::uint16_t>& physicalize_vk_codes) {
     if (events.empty()) return 0;
     std::vector<INPUT> inputs;
     inputs.reserve(events.size());
     for (const auto& [vk, key_down] : events) {
-        if (!AppendInput(inputs, vk, /*key_up=*/!key_down)) {
+        const bool mark_voice_event = std::find(
+            physicalize_vk_codes.begin(), physicalize_vk_codes.end(), vk
+        ) != physicalize_vk_codes.end();
+        if (!AppendInput(inputs, vk, /*key_up=*/!key_down, mark_voice_event)) {
             break;
         }
     }
@@ -151,56 +161,57 @@ UINT SendInputBatch(const std::vector<std::pair<std::uint16_t, bool>>& events) {
 }
 
 // System action dispatch (run on caller thread).
-void DispatchSystemAction(SystemAction action) {
+bool DispatchSystemAction(SystemAction action) {
     switch (action) {
         case SystemAction::VolumeUp:
             // SendMessage HWND_BROADCAST WM_APPCOMMAND 0 lparam=APPCOMMAND_VOLUME_UP<<16.
             ::SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0,
                            MAKELPARAM(0, APPCOMMAND_VOLUME_UP));
-            break;
+            return true;
         case SystemAction::VolumeDown:
             ::SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0,
                            MAKELPARAM(0, APPCOMMAND_VOLUME_DOWN));
-            break;
+            return true;
         case SystemAction::VolumeMute:
             ::SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0,
                            MAKELPARAM(0, APPCOMMAND_VOLUME_MUTE));
-            break;
+            return true;
         case SystemAction::ShowDesktop:
             // Win + D shortcut.
             ::keybd_event(static_cast<BYTE>(kVkLWin), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(kVkD), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(kVkD), 0, KEYEVENTF_KEYUP, 0);
             ::keybd_event(static_cast<BYTE>(kVkLWin), 0, KEYEVENTF_KEYUP, 0);
-            break;
+            return true;
         case SystemAction::Escape:
             ::keybd_event(static_cast<BYTE>(kVkEscape), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(kVkEscape), 0, KEYEVENTF_KEYUP, 0);
-            break;
+            return true;
         case SystemAction::Return:
             ::keybd_event(static_cast<BYTE>(VK_RETURN), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(VK_RETURN), 0, KEYEVENTF_KEYUP, 0);
-            break;
+            return true;
         case SystemAction::Backspace:
             ::keybd_event(static_cast<BYTE>(VK_BACK), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(VK_BACK), 0, KEYEVENTF_KEYUP, 0);
-            break;
+            return true;
         case SystemAction::ContextMenu:
             ::keybd_event(static_cast<BYTE>(kVkApps), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(kVkApps), 0, KEYEVENTF_KEYUP, 0);
-            break;
+            return true;
         case SystemAction::AppSwitch:
             ::keybd_event(static_cast<BYTE>(VK_LMENU), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(kVkTab), 0, 0, 0);
             ::keybd_event(static_cast<BYTE>(kVkTab), 0, KEYEVENTF_KEYUP, 0);
             ::keybd_event(static_cast<BYTE>(VK_LMENU), 0, KEYEVENTF_KEYUP, 0);
-            break;
+            return true;
         case SystemAction::CodexOpen:
             // No canonical Win32 binding for "open codex"; surface as
             // a no-op rather than guessing. Phase 7 Application may
             // register a richer handler that overrides this.
-            break;
+            return false;
     }
+    return false;
 }
 
 bool VerifySendInputAvailable() {
@@ -218,6 +229,10 @@ bool VerifySendInputAvailable() {
 }  // namespace
 
 SendInputActionSink::SendInputActionSink() = default;
+
+SendInputActionSink::SendInputActionSink(
+    std::vector<std::uint16_t> physicalize_vk_codes)
+    : physicalize_vk_codes_(std::move(physicalize_vk_codes)) {}
 
 SendInputActionSink::~SendInputActionSink() {
     stop();
@@ -248,7 +263,7 @@ void SendInputActionSink::WorkerThreadMain() {
         if (batch.empty()) {
             continue;
         }
-        const UINT sent = SendInputBatch(batch);
+        const UINT sent = SendInputBatch(batch, physicalize_vk_codes_);
         if (sent == batch.size()) {
             submitted_count_.fetch_add(batch.size(),
                                        std::memory_order_relaxed);
@@ -297,7 +312,10 @@ void SendInputActionSink::stop() noexcept {
     stop_flag_.store(true);
     queue_cv_.notify_all();
     if (thread_ != nullptr) {
-        WaitForSingleObject(thread_, 5000);
+        // The object cannot be destroyed while its worker still holds
+        // ``this``.  A timed wait followed by CloseHandle allowed a
+        // rare use-after-free if teardown exceeded five seconds.
+        WaitForSingleObject(thread_, INFINITE);
         CloseHandle(thread_);
         thread_ = nullptr;
         thread_id_ = 0;
@@ -318,6 +336,7 @@ bool SendInputActionSink::submit_key(std::uint16_t vk_code, bool key_down,
             // Drop oldest to keep the queue bounded (per
             // win32_input.py:248-269 "partial delivery" handling).
             key_queue_.erase(key_queue_.begin());
+            submit_error_count_.fetch_add(1, std::memory_order_relaxed);
         }
         key_queue_.emplace_back(vk_code, key_down);
     }
@@ -330,7 +349,10 @@ bool SendInputActionSink::submit_system_action(SystemAction action) noexcept {
         ++submit_error_count_;
         return false;
     }
-    DispatchSystemAction(action);
+    if (!DispatchSystemAction(action)) {
+        ++submit_error_count_;
+        return false;
+    }
     ++submitted_count_;
     return true;
 }
@@ -357,6 +379,7 @@ std::uint64_t SendInputActionSink::submitted_count() const noexcept {
 namespace remotemic::input {
 
 SendInputActionSink::SendInputActionSink() = default;
+SendInputActionSink::SendInputActionSink(std::vector<std::uint16_t>) {}
 SendInputActionSink::~SendInputActionSink() = default;
 
 bool SendInputActionSink::submit_key(std::uint16_t, bool,

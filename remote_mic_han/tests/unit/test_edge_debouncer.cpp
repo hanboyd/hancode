@@ -34,24 +34,27 @@ class ManualTimer final : public TimerHandle {
 public:
     explicit ManualTimer(std::function<void()> handler)
         : handler_(std::move(handler)) {}
-    void cancel() noexcept override { cancelled_ = true; }
-    bool cancelled_ = false;
+    void cancel() noexcept override;
     std::function<void()> handler_;
 };
 
-ManualTimer* last_timer = nullptr;
+bool timer_created = false;
+bool last_timer_cancelled = false;
+
+void ManualTimer::cancel() noexcept { last_timer_cancelled = true; }
 
 std::unique_ptr<TimerHandle> manual_factory(
     milliseconds /*delay*/,
     std::function<void()> handler) {
     auto t = std::make_unique<ManualTimer>(std::move(handler));
-    last_timer = t.get();
+    timer_created = true;
     return t;
 }
 
 void reset_test_state() {
     fired = 0;
-    last_timer = nullptr;
+    timer_created = false;
+    last_timer_cancelled = false;
 }
 
 void handler_a() { ++fired; }
@@ -104,7 +107,7 @@ void test_release_then_press_cancels_pending_timer() {
     d.on_release(&handler_a);
     d.on_press();  // cancels the pending release
 
-    expect(last_timer != nullptr && last_timer->cancelled_,
+    expect(timer_created && last_timer_cancelled,
            "release then press: pending timer is cancelled");
 }
 
@@ -132,7 +135,7 @@ void test_shutdown_cancels_pending_release() {
     d.on_release(&handler_a);
     d.shutdown();
 
-    expect(last_timer != nullptr && last_timer->cancelled_,
+    expect(timer_created && last_timer_cancelled,
            "shutdown cancels the pending timer");
     bool fired_now = d.fire_pending_now_for_test();
     expect(!fired_now,

@@ -38,10 +38,20 @@ public:
     void drain(std::chrono::milliseconds timeout) noexcept override;
     void stop() noexcept override;
     void close() noexcept override;
+    [[nodiscard]] std::string last_error() const override;
 
     // Test introspection.
     std::uint64_t dropped_count() const noexcept;
     std::uint64_t write_error_count() const noexcept;
+    std::uint64_t chunks_pushed_count() const noexcept;
+    std::uint32_t output_sample_rate_hz() const noexcept;
+    // Diagnostic: IMMDevice ID string of the endpoint resolved by the
+    // last start() (empty when no start succeeded).
+    [[nodiscard]] std::string matched_endpoint_id() const noexcept;
+    [[nodiscard]] std::uint16_t mix_channels() const noexcept;
+    [[nodiscard]] std::uint16_t mix_bits_per_sample() const noexcept;
+    [[nodiscard]] bool mix_is_float() const noexcept;
+    [[nodiscard]] std::string session_volume_info() const noexcept;
     bool writer_thread_alive() const noexcept;
     PcmFormat current_format() const noexcept;
 
@@ -60,7 +70,16 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_requested_{false};
     std::thread writer_thread_;
-    std::uint64_t write_error_count_{0};
+    std::atomic<std::uint64_t> write_error_count_{0};
+    std::atomic<std::uint64_t> chunks_pushed_{0};
+    // Diagnostic surface for start() failures (IAudioRoute::last_error).
+    // Written on the start() caller thread; read on the coordinator path.
+    std::string last_error_;
+    std::string matched_endpoint_id_;
+    std::string session_volume_info_;
+    std::uint16_t mix_channels_{0};
+    std::uint16_t mix_bits_per_sample_{0};
+    bool mix_is_float_{false};
 
     std::uint32_t output_sample_rate_hz_{16'000};
     PcmFormat current_format_{};

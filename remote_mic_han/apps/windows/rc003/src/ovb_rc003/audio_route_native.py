@@ -62,6 +62,9 @@ class _NativeAudioRoute:
         self._is_native = True
 
     def open(self) -> None:
+        if not self._is_native:
+            self._impl.open()
+            return
         # PcmFormat: 16 kHz, mono, int16 (matches BLE ATVV source).
         fmt = _rn_module().PcmFormat()
         ok = self._impl.start(fmt)
@@ -77,7 +80,13 @@ class _NativeAudioRoute:
         # pybind11 accepts a Python list of int and copies into a
         # std::vector<int16_t>; the C++ side handles drop-oldest
         # internally.
-        self._impl.write(list(samples))
+        result = self._impl.write(list(samples))
+        if self._is_native and result is False:
+            from .audio_output import AudioOutputUnavailableError
+
+            raise AudioOutputUnavailableError(
+                "native WASAPI route rejected PCM write"
+            )
 
     def drain(self, timeout_seconds: float) -> None:
         self._impl.drain(int(timeout_seconds * 1000))

@@ -184,9 +184,15 @@ class LegacyKeySuppressorVoiceHotkeyPhysicalizeTests(unittest.TestCase):
         self.assertFalse(gate.consume_armed_key_event(0x26, 0x48, True, True))
 
     def test_armed_five_is_left_to_the_dedicated_voice_suppressor(self):
-        gate = suppressor.LegacyKeySuppressor({0x74})
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74},
+            rc003_vk_codes=frozenset({0x74}),
+            consume_wait_seconds=10.0,
+        )
         gate.arm_key_event(0x74, 0x3F, False, True)
+        start = time.monotonic()
         self.assertFalse(gate.consume_armed_key_event(0x74, 0x3F, False, True))
+        self.assertLess(time.monotonic() - start, 0.050)
 
 
 class LegacyKeySuppressorRaceTests(unittest.TestCase):

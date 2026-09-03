@@ -58,6 +58,7 @@ import asyncio
 import logging
 import queue
 import threading
+import time
 from typing import List, Optional
 
 from . import (
@@ -83,6 +84,7 @@ from . import (
     win32_input,
     win32_keys,
 )
+from .ble_transport_native import make_ble_session
 # Phase 3 / ADR-0013 §5: production routing for the three Phase 3 state
 # machines. Default choice is "python" (see ``_remotemic_native_runtime``),
 # so ordinary users get the python baseline unchanged; setting
@@ -122,6 +124,8 @@ from .audio_route_native import make_audio_route
 # side enumerates the same RC003 VID/PID filter per ADR-0015 §3.7.
 from .input_source_native import make_input_source
 from .host_action_sink_native import make_host_action_sink
+from ._remotemic_native_runtime import implementation_choice
+from .application_coordinator_native import NativeCoordinatorApp
 
 
 class CleanupIncompleteError(RuntimeError):
@@ -182,7 +186,7 @@ class RC003App:
         self._voice_legacy_transform_session = False
         self._voice_legacy_transform_emitted = False
         self._legacy_f5_is_down = False
-        self._ble_session: Optional[ble_transport_winrt.RC003BleSession] = None
+        self._ble_session: Optional[object] = None
         self._hid_listener: Optional[raw_input_windows.RawInputButtonListener] = None
         self._legacy_key_suppressor: Optional[
             legacy_key_suppressor_windows.LegacyKeySuppressor
@@ -219,6 +223,7 @@ class RC003App:
         # ``open()``; log code at 1371-1376 uses ``getattr`` with
         # defaults to handle both.
         self._playback = None
+        self._voice_system_lease = None
         self._voice_pcm_stats = PcmStats()
 
         self._supervisor = connection_supervisor.ConnectionSupervisor(
@@ -274,6 +279,7 @@ class RC003App:
         await self._supervisor.stop()
 
     async def _connect_once(self) -> None:
+        self._ensure_voice_system_lease()
         self._logger.info("startup: resolving RC003 identity")
         candidates = await ble_transport_winrt.discover_candidates()
         # Fail-closed by construction: raises NoCandidateFoundError or
@@ -281,7 +287,7 @@ class RC003App:
         candidate = identity.select_single_candidate(candidates)
         self._logger.info("startup: exactly one RC003 candidate resolved")
 
-        self._ble_session = ble_transport_winrt.RC003BleSession(
+        self._ble_session = make_ble_session(
             on_pcm_frame=self._on_pcm_frame,
             on_control_event=self._on_control_event,
             on_error=self._on_session_error,
@@ -297,6 +303,22 @@ class RC003App:
         # LL hook can fire, which happens inside ``_start_hid_listener``
         # above (the suppressor is started at the end of that method).
         self._start_voice_edge_worker()
+
+    def _ensure_voice_system_lease(self) -> None:
+        if self._voice_system_lease is not None:
+            return
+        try:
+            import remotemic_native as _native
+            lease_type = getattr(_native, "WindowsVoiceAudioPolicyLease", None)
+            if lease_type is None:
+                return
+            lease = lease_type()
+            if not lease.recover_stale():
+                self._logger.warning("startup: stale voice audio policy recovery failed")
+                return
+            self._voice_system_lease = lease
+        except Exception:
+            self._logger.exception("startup: voice audio policy lease unavailable")
 
 
     def _start_hid_listener(self) -> None:
@@ -612,6 +634,13 @@ class RC003App:
                 # open a second sink over it (XRBM-019 review round 1 P1
                 # #5).
 
+        if self._voice_system_lease is not None:
+            try:
+                self._voice_system_lease.restore()
+            except Exception:
+                self._logger.exception("cleanup: restoring voice audio policy failed")
+                failures.append("voice audio policy was not restored")
+
         self._logger.info("cleanup: attempted release of hotkey state and BLE/HID/audio")
 
         if failures:
@@ -770,14 +799,21 @@ class RC003App:
                 return
             else:
                 self._legacy_f5_is_down = False
+                self._logger.info(
+                    "voice legacy F5 release received from low-level keyboard hook"
+                )
             host_action_handled = self._voice_legacy_transform_session
             # Enqueue the dispatch for the worker thread.  The hook thread
             # itself must NEVER acquire ``_voice_trigger_lock``; if the
             # queue is full (which would mean the worker has fallen badly
             # behind the hook), drop the event and log - releasing the
             # lock in flight is worse than missing a single mic release.
+            # The enqueue timestamp carries the physical-edge moment so
+            # the dispatch can honor the fixed 75 ms edge-to-tap budget.
             try:
-                self._voice_edge_queue.put_nowait((is_pressed, host_action_handled))
+                self._voice_edge_queue.put_nowait(
+                    (is_pressed, host_action_handled, time.monotonic())
+                )
             except queue.Full:
                 self._logger.warning(
                     "voice edge queue full; dropping %s edge from LL hook",
@@ -786,7 +822,10 @@ class RC003App:
             self._voice_legacy_transform_emitted = False
 
     def _dispatch_voice_mic_edge(
-        self, is_pressed: bool, host_action_handled: bool
+        self,
+        is_pressed: bool,
+        host_action_handled: bool,
+        edge_time: Optional[float] = None,
     ) -> None:
         """Apply Fix B (50 ms release debounce) and Fix C (drain-before-stop),
         then route the edge through ``_on_button_event``.
@@ -799,19 +838,23 @@ class RC003App:
         ``CURRENT_STATUS.md`` "Observed one real post-change RC003 hold"
         and the 23:01:23 / 23:01:26 / 23:01:37 entries).
 
-        When the debouncer runs (the release was not cancelled), this
-        method waits up to ``_playback_drain_timeout_seconds`` for the
-        PortAudio output buffer to empty before emitting the closing
-        host edge, so target applications like Typeless whose voice UI
-        stays open while the host key is held see the X / ✓
-        confirmation pill persist until every buffered voice sample has
-        reached CABLE Output.  This is the Windows equivalent of the
-        macOS upstream's ``VoiceFnTapSessionController.endSessionAfterDraining``.
+        Both edges dispatch directly with the same latency.  The second
+        Typeless shortcut (toggle into its Thinking animation) therefore
+        lands with the same delay as the first.  No drain and no release
+        debounce are applied (per user acceptance on 2026-09-02).
 
         Runs on the ``voice-edge-worker`` thread only.  Tests that need
         to exercise the dispatch synchronously should call this method
         directly, bypassing the LL hook callback and the queue.
         """
+
+        # Fixed 75 ms edge-to-tap budget for BOTH edges: the opening and
+        # the closing Typeless shortcut land the same 75 ms after the
+        # physical key event (user-specified acceptance timing).
+        if edge_time is not None:
+            remaining = edge_time + 0.075 - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
 
         if is_pressed:
             # Cancel a pending release: this press continues the same
@@ -822,23 +865,9 @@ class RC003App:
             )
             return
 
-        # Release: schedule via debouncer; on fire, drain then then emit.
-        def _release_after_drain() -> None:
-            try:
-                if self._playback is not None:
-                    self._playback.drain(self._playback_drain_timeout_seconds)
-            except Exception:
-                # Drain is a best-effort: any failure must not skip the
-                # host release, otherwise the target application would
-                # stay stuck in its voice UI forever.
-                self._logger.exception(
-                    "voice release drain failed; emitting host release anyway"
-                )
-            self._on_button_event(
-                "mic", False, host_action_handled=host_action_handled
-            )
-
-        self._voice_edge_debouncer.on_release(_release_after_drain)
+        self._on_button_event(
+            "mic", False, host_action_handled=host_action_handled
+        )
 
     def _start_voice_edge_worker(self) -> None:
         """Start the dedicated worker that drains the LL hook queue.
@@ -895,9 +924,11 @@ class RC003App:
                 continue
             if item is None:
                 break
-            is_pressed, host_action_handled = item
+            is_pressed, host_action_handled, edge_time = item
             try:
-                self._dispatch_voice_mic_edge(is_pressed, host_action_handled)
+                self._dispatch_voice_mic_edge(
+                    is_pressed, host_action_handled, edge_time
+                )
             except Exception:
                 self._logger.exception(
                     "voice edge worker dispatch failed; dropping edge"
@@ -924,8 +955,10 @@ class RC003App:
                 break
             if item is None:
                 continue
-            is_pressed, host_action_handled = item
-            self._dispatch_voice_mic_edge(is_pressed, host_action_handled)
+            is_pressed, host_action_handled, edge_time = item
+            self._dispatch_voice_mic_edge(
+                is_pressed, host_action_handled, edge_time
+            )
             drained += 1
         # Force any pending debounced release to fire so the test sees
         # the host release immediately after the press.  We invoke the
@@ -951,7 +984,43 @@ class RC003App:
                 "voice Raw Input mic edge ignored: direct HID/F5 path owns voice"
             )
             return
+        if self._physical_key_is_authoritative(button_id):
+            # The RC003 keyboard collection already delivered this exact
+            # arrow/Enter edge to the foreground application.  Re-injecting
+            # the same semantic action would deterministically double it.
+            # Leave the physical edge as the sole owner for identity
+            # mappings; custom and multi-gesture mappings continue through
+            # the device-scoped Raw Input -> gesture path below.
+            return
         self._on_button_event(button_id, is_pressed)
+
+    def _physical_key_is_authoritative(self, button_id: str) -> bool:
+        """Use the original RC003 keyboard edge for exact identity mappings.
+
+        A low-level keyboard hook cannot identify the originating device.
+        Therefore globally swallowing VK_UP/VK_DOWN/etc. would also swallow a
+        normal keyboard.  For the common/default identity mappings the safe,
+        race-free solution is to emit no replacement at all and let the one
+        physical edge pass through.  Secondary gestures deliberately opt out
+        because they require application-owned interpretation.
+        """
+
+        if key_mapping.has_secondary_action(self._bindings, button_id):
+            return False
+        identity = {
+            "up": key_mapping.ActionKind.ARROW_UP,
+            "down": key_mapping.ActionKind.ARROW_DOWN,
+            "left": key_mapping.ActionKind.ARROW_LEFT,
+            "right": key_mapping.ActionKind.ARROW_RIGHT,
+            "ok": key_mapping.ActionKind.RETURN,
+        }
+        expected = identity.get(button_id)
+        if expected is None:
+            return False
+        action = key_mapping.button_action_for(
+            self._bindings, button_id, key_mapping.ButtonTrigger.SINGLE_CLICK
+        )
+        return action.kind == expected
 
     def _on_raw_input_event(self, event: raw_input_windows.RawInputEvent) -> None:
         """Arm the exact original keyboard edge for duplicate suppression.
@@ -972,6 +1041,8 @@ class RC003App:
             or event.vkey is None
             or event.make_code is None
         ):
+            return
+        if self._physical_key_is_authoritative(event.button_id):
             return
         # While the Frida tap side channel is reporting full keyboard
         # snapshots, it already arms and dispatches every ordinary button on
@@ -1217,6 +1288,11 @@ class RC003App:
                             "voice ATVV mic control observed; waiting for physical mic edge"
                         )
                         self._open_playback_for_new_session()
+                    elif not self._voice_physical_button_down:
+                        self._voice_audio_started_waiting_for_legacy_f5 = False
+                        self._logger.info(
+                            "voice mic trigger ignored: no physical mic press"
+                        )
                     else:
                         self._voice_audio_started_waiting_for_legacy_f5 = False
                         self._logger.info(
@@ -1232,6 +1308,15 @@ class RC003App:
                         )
                         self._voice_audio_started_waiting_for_legacy_f5 = True
                         self._open_playback_for_new_session()
+                    elif not self._voice_physical_button_down:
+                        # TOGGLE mode: only the physical F5 edge may own the
+                        # Typeless shortcut. ATVV control events (including
+                        # the device's late/fragmented re-announcements
+                        # after a release) must never toggle the recognizer
+                        # without a physical press.
+                        self._logger.info(
+                            "voice mic trigger ignored: no physical mic press"
+                        )
                     else:
                         self._logger.info("voice mic trigger received from ATVV control channel")
                         self._handle_mic_button_pressed()
@@ -1249,6 +1334,14 @@ class RC003App:
                         )
                         self._voice_audio_started_waiting_for_legacy_f5 = True
                         self._open_playback_for_new_session()
+                    elif not self._voice_physical_button_down:
+                        # TOGGLE mode: only the physical F5 edge owns the
+                        # Typeless shortcut. A late or fragmented
+                        # AUDIO_START after the release must never reopen
+                        # the recognizer window.
+                        self._logger.info(
+                            "voice audio start ignored: no physical mic press"
+                        )
                     else:
                         self._logger.info("voice audio start used as microphone trigger")
                         # Real RC003 hardware can emit AUDIO_START before the
@@ -1309,6 +1402,11 @@ class RC003App:
                 "requesting reconnect"
             )
             self._supervisor.request_reconnect()
+        if self._voice_system_lease is not None:
+            try:
+                self._voice_system_lease.restore()
+            except Exception:
+                self._logger.exception("voice audio policy restore failed")
 
     def _handle_mic_button_pressed(
         self,
@@ -1333,12 +1431,9 @@ class RC003App:
 
         self._voice_audio_started_waiting_for_legacy_f5 = False
 
-        if not self._open_playback_for_new_session():
-            self._logger.info(
-                "voice failing closed: no usable output endpoint; hotkey/MIC_OPEN suppressed"
-            )
-            return
-
+        # The Typeless shortcut goes FIRST so the fixed 75 ms edge-to-tap
+        # budget is honored (user-specified acceptance timing); the audio
+        # policy lease and playback setup follow it.
         action = self._voice.on_mic_button_pressed()
         action_delivered = (
             True
@@ -1358,6 +1453,26 @@ class RC003App:
             self._logger.info(
                 "voice failing closed: host hotkey delivery failed; MIC_OPEN suppressed"
             )
+            return
+
+        lease_acquired = False
+        if self._voice_system_lease is not None:
+            try:
+                lease_acquired = bool(self._voice_system_lease.acquire())
+            except Exception:
+                self._logger.exception("voice system policy acquire failed")
+            if not lease_acquired:
+                self._logger.info(
+                    "voice failing closed: capture/ducking policy unavailable; MIC_OPEN suppressed"
+                )
+                return
+
+        if not self._open_playback_for_new_session():
+            self._logger.info(
+                "voice failing closed: no usable output endpoint; MIC_OPEN suppressed"
+            )
+            if lease_acquired:
+                self._voice_system_lease.restore()
             return
 
         if send_device_open and self._ble_session is not None:
@@ -1401,6 +1516,9 @@ class RC003App:
                 win32_input.send_voice_key_combo_down(tokens)
             else:
                 win32_input.send_voice_key_combo_up(tokens)
+            self._logger.info(
+                "voice host shortcut delivered to OS: %s", action.value
+            )
             return True
         except win32_input.Win32InputUnavailableError:
             self._logger.info("voice hotkey action skipped: no usable voice input backend")
@@ -1496,10 +1614,30 @@ class RC003App:
             self._supervisor.request_reconnect()
 
 
+def _make_application() -> RC003App | NativeCoordinatorApp:
+    """Construct exactly one product coordinator for this process.
+
+    The first usable release defaults to the user-accepted Python owner. The
+    native coordinator remains an explicit whole-application opt-in, not a
+    per-backend mixture. Native unavailability and the forbidden side-effecting
+    ``shadow`` choice fail loudly when native is explicitly selected.
+    """
+
+    choice = implementation_choice("application_coordinator")
+    if choice == "native":
+        return NativeCoordinatorApp()
+    if choice == "python":
+        return RC003App()
+    raise RuntimeError(
+        "application_coordinator does not support shadow mode; "
+        "choose 'native' or the retained 'python' rollback"
+    )
+
+
 async def _run(
     stop_signal: Optional[bridge_control_windows.BridgeStopSignal] = None,
 ) -> None:
-    app = RC003App()
+    app = _make_application()
     run_task: Optional[asyncio.Task] = None
     stop_task: Optional[asyncio.Task] = None
     try:

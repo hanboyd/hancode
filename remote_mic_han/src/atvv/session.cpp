@@ -80,7 +80,10 @@ ControlEvent Session::handle_control(
     if (opcode == static_cast<std::uint8_t>(Opcode::Caps)) {
         auto parsed = parse(payload);
         if (!parsed) {
-            return UnknownControl{opcode};
+            throw std::invalid_argument("malformed CAPS payload");
+        }
+        if (parsed->sample_rate != kDefaultSampleRate) {
+            throw std::invalid_argument("unsupported ATVV sample rate");
         }
         const bool sample_rate_changed =
             !caps_ || caps_->sample_rate != parsed->sample_rate;

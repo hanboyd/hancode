@@ -2,13 +2,152 @@
 
 ## [Unreleased]
 
-### Phase 6（C++ 迁移）+ Phase 7/8/9
+## [1.0.0] - 2026-09-03
 
-（待开始。范围：Phase 6 BLE / WinRT、Phase 7 Application
-coordinator、Phase 8 PyInstaller / Inno Setup / portable ZIP /
-签名发布、Phase 9 UI 决策。Phase 5 已在 `0.6.0-candidate`
-完成自动化门禁；真机 / Typeless / Qianwen 验收 deferred；本节
-保留作下一阶段入口。）
+### First usable post-refactor release
+
+- Versioned the first usable incremental C++/Python hybrid release as `1.0.0`.
+  The release-default Python coordinator remains the only path accepted on a
+  real RC003 with VB-CABLE and Typeless; the native coordinator remains an
+  explicit diagnostic opt-in while native WASAPI audio is deferred.
+- Restored the previously accepted card-based settings UI and kept the
+  packaged Qt runtime isolated from unrelated DLLs on the host machine.
+- Real-device Typeless acceptance passed: one shortcut approximately 75 ms
+  after press, one approximately 75 ms after release, audible PCM, and no
+  uncommanded second trigger during the observed post-release window.
+- Known issue deferred by user direction: Back -> Delete, Volume Up -> Ctrl+C,
+  and Volume Down -> Ctrl+V do not currently trigger. The saved mappings are
+  intact, but both the prior package and this build fail to attach the optional
+  HID tap to WUDFHost with Windows error 5 (access denied). This is not a
+  Typeless release blocker and is not claimed as passed in 1.0.0.
+- Qianwen integration and native WASAPI audibility remain deferred.
+
+### First usable release defaults to the accepted coordinator
+
+- Default startup now constructs the Python application coordinator that
+  passed real RC003 + Typeless acceptance. The native coordinator is retained
+  behind explicit `REMOTEMIC_NATIVE_CHOICE_APPLICATION_COORDINATOR=native`
+  opt-in while its WASAPI output issue is deferred.
+- Updated the coordinator routing contract and amended ADR-0018. Focused
+  routing/entry tests passed 34 tests with 2 environment skips; the full
+  Python suite passed 1090 tests with 21 environment skips.
+
+### Typeless voice-edge timing and false post-release retrigger
+
+- Fixed the dedicated RC003 F5 path entering a generic Raw Input correlation
+  wait that could never match F5. The serialized low-level hook previously
+  stalled 62–78 ms for every held-key repeat, accumulated a backlog across
+  KeyUp, delayed the closing Typeless shortcut, and could reinterpret an old
+  repeat as a new physical press.
+- F5 now bypasses that wait and remains owned by the existing voice latch;
+  repeats are collapsed until KeyUp. Removed the rejected 800 ms suppression
+  workaround so a valid rapid second press is not hidden by a time window.
+- Press and release each retain their monotonic edge timestamp and target the
+  start of one complete Typeless toggle shortcut at edge + 75 ms. The accepted
+  real run measured 78 ms on press and 76 ms on release, with no later
+  unauthorized shortcut; the user confirmed no post-release Typeless reopen.
+- Focused tests passed three consecutive 76-test runs (1 environment skip per
+  run); the expanded voice/input/ATVV/BLE regression passed 137 tests with
+  1 environment skip; the package-level full Python suite passed 1090 tests
+  with 21 environment skips. No package or installer was produced.
+
+### Three known bug boundaries
+
+- Default identity direction/OK mappings now use the original physical RC003
+  keyboard edge as the sole output; Raw Input no longer injects a duplicate.
+- Native voice sessions acquire and restore default capture roles plus Windows
+  communications ducking before the transcription hotkey, with a local crash
+  recovery marker and user-change-aware restore.
+- Added a privacy-safe synthetic VB-CABLE loopback probe. No packaging was run.
+
+### Phase 9 UI copy — accepted QML retained, native state added
+
+- 采用“照抄”路线：现有 7 个 QML 页面/主题文件保持逐字节不变，不重新设计、
+  不改布局、不另起 WinUI 页面。新增 SHA-256 copy contract，页面增删或视觉
+  修改都会让 Phase 9 测试失败。
+- 新增 Qt-independent C++ `UiSettingsState`，原生持有语音模式/热键联动、
+  输出端点选择、设备选择和当前按键选择；PySide6 继续负责 QML engine、Qt
+  Signal/ListModel 投影以及 Windows 系统操作 adapter。
+- `SettingsController` 已接入 native state；源码环境缺 `_C.pyd` 时保留同接口
+  Python 回退，不影响直接打开设置窗口。
+- 新增 ADR-0019、C++ unit、binding/route/QML-copy 测试。实际 QML 离屏加载、
+  点击、几何、对比度、设置保存、诊断线程退出合同继续沿用并全部通过。
+- 自动验证：51/51 CTest Debug、51/51 CTest Release、1105 Python tests
+  passed（7 skipped）、400-file public-boundary scan passed、
+  `git diff --check` passed。未执行打包。
+
+### Phase 8 native-default source candidate (packaging deferred)
+
+- 顶层 `application_coordinator` 默认值由 `python` 切换为 `native`；启动时
+  只构造一个协调器，不混用两套 BLE、音频或输入 owner。
+- 保留完整 Python 回滚：设置
+  `REMOTEMIC_NATIVE_CHOICE_APPLICATION_COORDINATOR=python` 即可在进程启动前
+  回到既有 `RC003App` 路径；`shadow` 明确拒绝。
+- native binding 缺失时默认路径会明确失败，不会静默回退后仍冒充 native
+  候选。新增 Phase 8 默认/回滚/失败关闭测试。
+- 源码版本同步提升到 `0.8.0-candidate`；安装器 `AppVersion` 未改，未生成
+  PyInstaller、便携包或 Inno Setup 产物。
+- 旧 Python 核心和黄金行为夹具继续保留至少一个稳定版本周期；真实 RC003
+  语音/PCM、Typeless/Qianwen、休眠唤醒、冻结程序和原位升级仍为 deferred。
+- 自动验证：49/49 CTest Debug、49/49 CTest Release、1100 Python tests
+  passed（7 skipped）、395-file public-boundary scan passed、`git diff --check`
+  passed。实际工厂探针分别返回 `NativeCoordinatorApp`（默认）和
+  `RC003App`（显式回滚）。
+- Release 重编译顺带暴露并修复了防抖单测在定时器销毁后读取裸指针的
+  未定义行为；改用独立取消状态探针后 Debug/Release 均通过。
+
+### Phase 0–5 corrective audit
+
+- 补齐 ADR-0011 的 `RemoteMicError` 公共异常类型及 `code` / `category`
+  属性，并补全 Phase 5 native-choice 显式策略项。
+- 修复 Phase 2 ADPCM 后处理把三点 FIR 误写成递归滤波导致的样本漂移；
+  DC 高通参数拒绝规则现与 Python 一致。
+- 修复 Phase 3 native 防抖定时器绕过 C++ pending 消费路径导致的潜在
+  重复触发；ATVV native session 现正确拒绝畸形 CAPS 与 8 kHz，并保留
+  Python 公共异常类型。
+- 修复 Phase 4 超大 PCM batch 的越界 erase、计数数据竞争、两秒队列容量
+  取错采样率、stop/restart 生命周期和扩展缺失时音频 fallback 断路。
+- 修复 Phase 5 输入异常路径未定义 logger、Python host-action fallback 调用
+  不存在的函数/错误的 key-up 极性/错误的系统动作名称，以及 worker 超时后
+  仍可能访问已析构 owner 的风险；不支持的 CodexOpen 不再虚报成功。
+- 回归验证：48/48 CTest Debug、48/48 CTest Release、1095 Python tests
+  passed（7 skipped）、393-file public-boundary scan；未执行打包。
+
+### Phase 7 application coordinator (source implementation)
+
+- 新增 C++ `ApplicationCoordinator`，统一拥有 BLE、ATVV session、音频、
+  Raw Input 和 SendInput 生命周期；提供带序号的幂等 start/stop 命令、
+  失败回滚、确定性清理和 128 项有界事件邮箱。
+- BLE control/audio 通知留在 C++：控制事件进入 native session/voice
+  状态机，PCM 直接进入 audio route，回调线程不进入 Python/GIL。
+- PySide6/Python 继续拥有设置、按键手势、用户绑定、统计与第三方应用
+  adapter；普通按键边缘经事件邮箱回传，不与 C++ 默认映射重复执行。
+- 新增 pybind `ApplicationCoordinator`、`NativeCoordinatorApp`、连接监督器
+  路由和 `REMOTEMIC_NATIVE_CHOICE_APPLICATION_COORDINATOR=native` 显式开关。
+  默认保持 `python`，Phase 8 才有权改变默认值。
+- 自动验证：48/48 CTest Debug、48/48 CTest Release、1088 Python tests
+  passed（7 skipped）、393-file public-boundary scan passed。
+- 真实 RC003：native 协调器通过真实桥接入口启动，外部停止请求成功，
+  进程退出 0；独立 smoke 同时确认 connect/event/stop 且 dropped=0。
+- 打包、安装器、便携包和默认切换均未执行。
+
+---
+
+## [0.7.0-candidate] — 2026-09-01 — Phase 6 BLE / WinRT native owner
+
+- 新增 C++ `WinRTBleTransport`：单 owner GATT 连接、ATVV 服务/特征、
+  通知订阅、TX 写入、断连观察、64 项有界队列和确定性清理。
+- 新增 `FakeBleTransport`、pybind mailbox、`ble_transport_native.py`、
+  native/python 回退开关和生产调用点。
+- 修复 native ATVV 控制事件泄漏私有 dict ABI 的问题；现在恢复为
+  `CapsReceived` / `AudioStarted` / `AudioStopped` 等公开 Python 事件，
+  `app.py` 的 `isinstance` 分派可真实工作。
+- 修复 Debug `_C.pyd` 解释器退出时对已销毁 `IInputSource` 裸指针的
+  访问冲突；退出钩子只 disarm holder，不再解引用陈旧 source key。
+- 实机 RC003：发现、连接、控制通知、TX 写入、清理及两次重连通过；
+  音频通知因无人按实体语音键仍为 deferred。
+- 一次性冻结仅用于本地收集/启动技术核验，之后 `dist` 与 work 目录已
+  删除；没有发布包、安装器或 native 默认切换。正式打包留给 Phase 8。
 
 ---
 

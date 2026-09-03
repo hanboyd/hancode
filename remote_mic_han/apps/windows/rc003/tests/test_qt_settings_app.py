@@ -29,6 +29,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import remotemic_native as native
+
 from ovb_rc003 import (
     audio_output,
     bridge_launcher,
@@ -359,7 +361,12 @@ class SettingsControllerTests(unittest.TestCase):
         controller = self.Controller(model)
         return controller, model
 
-def test_hotkey_text_defaults_to_the_configured_default(self):
+    def test_compiled_ui_controller_uses_native_state(self):
+        controller, _ = self._make_controller()
+        if native._C_AVAILABLE:
+            self.assertEqual(type(controller._ui_state).__name__, "UiSettingsState")
+
+    def test_hotkey_text_defaults_to_the_configured_default(self):
         controller, _ = self._make_controller()
         self.assertEqual(controller.hotkeyText, "lctrl+lalt")
 
@@ -381,7 +388,7 @@ def test_hotkey_text_defaults_to_the_configured_default(self):
         controller, _ = self._make_controller()
         self.assertEqual(len(controller.triggerModeOptions), 2)
 
-def test_trigger_mode_switch_also_switches_the_paired_voice_hotkey(self):
+    def test_trigger_mode_switch_also_switches_the_paired_voice_hotkey(self):
         controller, _ = self._make_controller()
         controller.triggerModeIndex = 1
         self.assertEqual(controller.hotkeyText, "ralt")

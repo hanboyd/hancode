@@ -403,6 +403,27 @@ class HostHotkeyFailureSuppressesMicOpenTests(_AppWiringTestCase):
         )
         self.assertFalse(self.app._voice.active)
 
+    def test_both_toggle_edges_begin_the_host_shortcut_at_75_ms(self):
+        now = [10.0]
+        tap_times = []
+        original_monotonic = app_module.time.monotonic
+        original_sleep = app_module.time.sleep
+        original_tap = win32_input.send_voice_key_combo_tap
+        app_module.time.monotonic = lambda: now[0]
+        app_module.time.sleep = lambda seconds: now.__setitem__(0, now[0] + seconds)
+        win32_input.send_voice_key_combo_tap = lambda tokens: tap_times.append(now[0])
+        try:
+            self.app._dispatch_voice_mic_edge(True, False, edge_time=10.0)
+            now[0] = 12.0
+            self.app._dispatch_voice_mic_edge(False, False, edge_time=12.0)
+        finally:
+            app_module.time.monotonic = original_monotonic
+            app_module.time.sleep = original_sleep
+            win32_input.send_voice_key_combo_tap = original_tap
+
+        self.assertEqual(tap_times, [10.075, 12.075])
+        self.assertFalse(self.app._voice.active)
+
     def test_physical_legacy_f5_transform_skips_a_second_host_shortcut(self):
         self.app._voice.trigger_mode = key_mapping.VoiceTriggerMode.HOLD
         self.app._voice_hotkey = app_module.hotkey.HotkeySpec.parse("lctrl+lwin")
@@ -498,6 +519,9 @@ class HostHotkeyFailureSuppressesMicOpenTests(_AppWiringTestCase):
         self.assertFalse(self.app._voice.active)
 
     def test_audio_started_can_trigger_voice_when_legacy_f5_is_suppressed(self):
+        # User acceptance 2026-09-02: in TOGGLE mode only the physical F5
+        # edge owns the Typeless shortcut. An AUDIO_START without a
+        # physical press must not open the recognizer.
         original = win32_input.send_voice_key_combo_tap
         win32_input.send_voice_key_combo_tap = lambda tokens: None
         try:
@@ -505,10 +529,13 @@ class HostHotkeyFailureSuppressesMicOpenTests(_AppWiringTestCase):
         finally:
             win32_input.send_voice_key_combo_tap = original
 
-        self.assertTrue(self.app._voice.active)
-        self.assertEqual(self.app._ble_session.mic_open_calls, 1)
+        self.assertFalse(self.app._voice.active)
+        self.assertEqual(self.app._ble_session.mic_open_calls, 0)
 
     def test_late_mic_button_after_audio_start_does_not_send_a_second_alt(self):
+        # Dedup under a real physical hold: the physical latch is held,
+        # so the ATVV events may accompany the press without re-toggling.
+        self.app._voice_physical_button_down = True
         hotkey_calls = []
         original = win32_input.send_voice_key_combo_tap
         win32_input.send_voice_key_combo_tap = lambda tokens: hotkey_calls.append(tokens)
@@ -523,6 +550,7 @@ class HostHotkeyFailureSuppressesMicOpenTests(_AppWiringTestCase):
         self.assertEqual(self.app._ble_session.mic_open_calls, 1)
 
     def test_next_mic_button_after_the_late_duplicate_still_triggers_voice(self):
+        self.app._voice_physical_button_down = True
         hotkey_calls = []
         original = win32_input.send_voice_key_combo_tap
         win32_input.send_voice_key_combo_tap = lambda tokens: hotkey_calls.append(tokens)
@@ -537,6 +565,7 @@ class HostHotkeyFailureSuppressesMicOpenTests(_AppWiringTestCase):
         self.assertTrue(self.app._voice.active)
 
     def test_mic_button_before_audio_start_does_not_send_a_second_alt(self):
+        self.app._voice_physical_button_down = True
         hotkey_calls = []
         original = win32_input.send_voice_key_combo_tap
         win32_input.send_voice_key_combo_tap = lambda tokens: hotkey_calls.append(tokens)
@@ -551,6 +580,9 @@ class HostHotkeyFailureSuppressesMicOpenTests(_AppWiringTestCase):
         self.assertEqual(self.app._ble_session.mic_open_calls, 1)
 
     def test_no_usable_endpoint_suppresses_hotkey_and_mic_open(self):
+        # The 75 ms edge-to-tap budget (user acceptance 2026-09-02) sends
+        # the Typeless shortcut before the endpoint setup, so an unusable
+        # endpoint now suppresses MIC_OPEN only; the tap still lands.
         self.app._playback = None
         self.app._config["output_endpoint_name"] = "some endpoint that is not open"
 
@@ -562,7 +594,7 @@ class HostHotkeyFailureSuppressesMicOpenTests(_AppWiringTestCase):
         finally:
             win32_input.send_voice_key_combo_tap = original
 
-        self.assertEqual(hotkey_calls, [])
+        self.assertEqual(hotkey_calls, [("lctrl", "lalt")])
         self.assertEqual(self.app._ble_session.mic_open_calls, 0)
 
     def test_windows_actually_delivers_the_hotkey_unlike_the_off_windows_case(self):
@@ -701,6 +733,9 @@ class OrdinaryButtonGestureWiringTests(_AppWiringTestCase):
                 armed.append(args)
 
         self.app._legacy_key_suppressor = _Suppressor()
+        self.app._bindings["bindings"]["up"] = {
+            "kind": "key_combo", "keys": ["f8"]
+        }
         self.app._on_raw_input_event(
             raw_input_windows.RawInputEvent(
                 source="keyboard",
@@ -713,6 +748,27 @@ class OrdinaryButtonGestureWiringTests(_AppWiringTestCase):
         )
 
         self.assertEqual(armed, [(0x26, 0x48, True, True)])
+
+    def test_identity_arrow_uses_only_physical_edge(self):
+        armed = []
+        dispatched = []
+
+        class _Suppressor:
+            def arm_key_event(self, *args):
+                armed.append(args)
+
+        self.app._legacy_key_suppressor = _Suppressor()
+        self.app._on_button_event = lambda *args, **kwargs: dispatched.append(args)
+        event = raw_input_windows.RawInputEvent(
+            source="keyboard", is_pressed=True, button_id="up",
+            vkey=0x26, make_code=0x48, flags=0x02,
+        )
+
+        self.app._on_raw_input_event(event)
+        self.app._on_raw_input_button_event("up", True)
+
+        self.assertEqual(armed, [])
+        self.assertEqual(dispatched, [])
 
     def test_unknown_or_unbound_raw_keyboard_edge_is_not_armed(self):
         armed = []

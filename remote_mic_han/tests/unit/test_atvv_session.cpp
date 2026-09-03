@@ -85,6 +85,23 @@ void test_caps_payload_sets_capabilities() {
            "Caps: capabilities() exposes the parsed value");
 }
 
+void test_malformed_caps_and_unsupported_sample_rate_are_rejected() {
+    for (const auto& payload : std::vector<std::vector<std::uint8_t>>{
+             {0x0B, 0x01, 0x00},
+             {0x0B, 0x01, 0x00, 0x01, 0x00, 0x00, 0x78}}) {
+        Session s;
+        bool rejected = false;
+        try {
+            (void)s.handle_control(as_span(payload));
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        expect(rejected, "invalid CAPS must match Python rejection");
+        expect(s.capabilities() == nullptr,
+               "rejected CAPS must not mutate session capabilities");
+    }
+}
+
 void test_audio_start_resets_state() {
     Session s;
     // First prime with a real caps payload so frame_size is set.
@@ -206,6 +223,7 @@ void test_mic_close_command_returns_bytes() {
 int main() {
     test_empty_payload_throws();
     test_caps_payload_sets_capabilities();
+    test_malformed_caps_and_unsupported_sample_rate_are_rejected();
     test_audio_start_resets_state();
     test_audio_stop_records_last_mic_off_at();
     test_mic_button_emits_typed_event();

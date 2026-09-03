@@ -116,6 +116,7 @@ from . import (
     settings_ui,
     shell_targets,
     usage_statistics,
+    ui_settings_state_native,
     vb_cable_bundle,
     windows_diagnostics,
 )
@@ -642,6 +643,8 @@ def _load_qt_classes() -> dict:
 
         hotkeyTextChanged = Signal()
         triggerModeIndexChanged = Signal()
+        voicePresetIndexChanged = Signal()
+        activeVoicePresetTextChanged = Signal()
         endpointOptionsChanged = Signal()
         selectedEndpointIndexChanged = Signal()
         launchStatusTextChanged = Signal()
@@ -677,6 +680,7 @@ def _load_qt_classes() -> dict:
                 self._config.get("voice_trigger_mode", "toggle")
             )
             self._trigger_mode_index = self._TRIGGER_MODE_ORDER.index(saved_trigger_mode)
+            self._active_voice_preset_text = "尚未由本窗口确认"
 
             self._launch_status_text = settings_ui.LAUNCH_NOT_STARTED_TEXT
             self._status_message = ""
@@ -705,9 +709,23 @@ def _load_qt_classes() -> dict:
             self._endpoint_choices: List[audio_output.AudioEndpoint] = []
             self._selected_endpoint_index = -1
             self._refresh_endpoint_options()
+            self._ui_state = ui_settings_state_native.make_ui_settings_state(
+                self._hotkey_text,
+                self._trigger_mode_index,
+                [
+                    settings_ui.voice_hotkey_for_trigger_mode(mode)
+                    for mode in self._TRIGGER_MODE_ORDER
+                ],
+                len(self._endpoint_choices),
+                self._selected_endpoint_index,
+                list(self._DEVICE_ORDER),
+                self._selected_device_fallback_id,
+                list(remote_layout.BUTTON_ORDER),
+                self._selected_button_id,
+            )
             self._refresh_dji_mic_status()
             self._load_bindings_into_model()
-            self._model.set_selected_button(self._selected_button_id)
+            self._model.set_selected_button(self._ui_state.selected_button_id)
 
         # -- internal helpers -------------------------------------------------
 
@@ -755,6 +773,10 @@ def _load_qt_classes() -> dict:
             self._selected_endpoint_index = (
                 endpoints.index(saved_endpoint) if saved_endpoint in endpoints else -1
             )
+            if hasattr(self, "_ui_state"):
+                self._ui_state.set_endpoint_selection(
+                    len(endpoints), self._selected_endpoint_index
+                )
 
         def _load_bindings_into_model(self) -> None:
             bindings = self._bindings.get("bindings", {})
@@ -793,9 +815,7 @@ def _load_qt_classes() -> dict:
             self._model.load_display_map(display_map, secondary_display_map)
 
         def _selected_device_id(self) -> str:
-            if 0 <= self._selected_device_index < len(self._DEVICE_ORDER):
-                return self._DEVICE_ORDER[self._selected_device_index]
-            return self._selected_device_fallback_id
+            return self._ui_state.selected_device_id
 
         def _refresh_dji_mic_status(self) -> None:
             try:
@@ -883,8 +903,7 @@ def _load_qt_classes() -> dict:
             """Change the mode preset without overwriting a just-recorded chord."""
 
             index = self._TRIGGER_MODE_ORDER.index(trigger_mode)
-            if index != self._trigger_mode_index:
-                self._trigger_mode_index = index
+            if self._ui_state.set_trigger_mode_preserving_hotkey(index):
                 self.triggerModeIndexChanged.emit()
 
         def _save(self) -> bool:
@@ -894,17 +913,18 @@ def _load_qt_classes() -> dict:
             previous Tk _save_and_launch() did.
             """
 
-            trigger_mode = self._TRIGGER_MODE_ORDER[self._trigger_mode_index]
+            trigger_mode = self._TRIGGER_MODE_ORDER[self._ui_state.trigger_mode_index]
             endpoint_display = ""
-            if 0 <= self._selected_endpoint_index < len(self._endpoint_choices):
+            selected_endpoint_index = self._ui_state.selected_endpoint_index
+            if 0 <= selected_endpoint_index < len(self._endpoint_choices):
                 endpoint_display = settings_ui._endpoint_display(
-                    self._endpoint_choices[self._selected_endpoint_index]
+                    self._endpoint_choices[selected_endpoint_index]
                 )
             try:
                 new_config, new_bindings = settings_ui.build_save_model(
                     button_display_map=self._model.to_display_map(),
                     secondary_display_map=self._model.to_secondary_display_map(),
-                    hotkey_text=self._hotkey_text,
+                    hotkey_text=self._ui_state.hotkey_text,
                     trigger_mode=trigger_mode,
                     endpoint_display_text=endpoint_display,
                     base_config=self._config,
@@ -946,12 +966,14 @@ def _load_qt_classes() -> dict:
         # -- properties ---------------------------------------------------
 
         def _get_hotkey_text(self) -> str:
-            return self._hotkey_text
+            return self._ui_state.hotkey_text
 
         def _set_hotkey_text(self, value: str) -> None:
-            if value != self._hotkey_text:
-                self._hotkey_text = value
+            previous_preset_index = self._get_voice_preset_index()
+            if self._ui_state.set_hotkey_text(value):
                 self.hotkeyTextChanged.emit()
+                if self._get_voice_preset_index() != previous_preset_index:
+                    self.voicePresetIndexChanged.emit()
 
         hotkeyText = Property(str, _get_hotkey_text, _set_hotkey_text, notify=hotkeyTextChanged)
 
@@ -961,17 +983,68 @@ def _load_qt_classes() -> dict:
         triggerModeOptions = Property(list, _get_trigger_mode_options, constant=True)
 
         def _get_trigger_mode_index(self) -> int:
-            return self._trigger_mode_index
+            return self._ui_state.trigger_mode_index
 
         def _set_trigger_mode_index(self, value: int) -> None:
-            if value != self._trigger_mode_index and 0 <= value < len(self._TRIGGER_MODE_ORDER):
-                self._trigger_mode_index = value
-                trigger_mode = self._TRIGGER_MODE_ORDER[value]
-                self._set_hotkey_text(settings_ui.voice_hotkey_for_trigger_mode(trigger_mode))
+            previous_hotkey = self._ui_state.hotkey_text
+            previous_preset_index = self._get_voice_preset_index()
+            if self._ui_state.set_trigger_mode_index(value):
+                if self._ui_state.hotkey_text != previous_hotkey:
+                    self.hotkeyTextChanged.emit()
+                if self._get_voice_preset_index() != previous_preset_index:
+                    self.voicePresetIndexChanged.emit()
                 self.triggerModeIndexChanged.emit()
 
         triggerModeIndex = Property(
             int, _get_trigger_mode_index, _set_trigger_mode_index, notify=triggerModeIndexChanged
+        )
+
+        def _get_voice_preset_options(self) -> List[str]:
+            # The restored accepted UI exposed application presets.  The
+            # first usable 1.0.0 release has only one verified target, so keep
+            # that visual contract without advertising the deferred Qianwen
+            # integration.
+            return ["Typeless（点按：左 Ctrl + 左 Alt）"]
+
+        voicePresetOptions = Property(list, _get_voice_preset_options, constant=True)
+
+        def _get_voice_preset_index(self) -> int:
+            tokens = frozenset(
+                token.strip().lower()
+                for token in self._ui_state.hotkey_text.split("+")
+                if token.strip()
+            )
+            return 0 if tokens == frozenset({"lctrl", "lalt"}) else -1
+
+        def _set_voice_preset_index(self, value: int) -> None:
+            if value != 0:
+                return
+            self._set_trigger_mode_preserving_hotkey(key_mapping.VoiceTriggerMode.TOGGLE)
+            self._set_hotkey_text("lctrl+lalt")
+
+        voicePresetIndex = Property(
+            int,
+            _get_voice_preset_index,
+            _set_voice_preset_index,
+            notify=voicePresetIndexChanged,
+        )
+
+        def _get_active_voice_preset_text(self) -> str:
+            return self._active_voice_preset_text
+
+        activeVoicePresetText = Property(
+            str,
+            _get_active_voice_preset_text,
+            notify=activeVoicePresetTextChanged,
+        )
+
+        def _get_active_voice_preset_confirmed(self) -> bool:
+            return self._active_voice_preset_text != "尚未由本窗口确认"
+
+        activeVoicePresetConfirmed = Property(
+            bool,
+            _get_active_voice_preset_confirmed,
+            notify=activeVoicePresetTextChanged,
         )
 
         def _get_endpoint_options(self) -> List[str]:
@@ -982,11 +1055,10 @@ def _load_qt_classes() -> dict:
         )
 
         def _get_selected_endpoint_index(self) -> int:
-            return self._selected_endpoint_index
+            return self._ui_state.selected_endpoint_index
 
         def _set_selected_endpoint_index(self, value: int) -> None:
-            if value != self._selected_endpoint_index:
-                self._selected_endpoint_index = value
+            if self._ui_state.set_selected_endpoint_index(value):
                 self.selectedEndpointIndexChanged.emit()
 
         selectedEndpointIndex = Property(
@@ -1012,9 +1084,19 @@ def _load_qt_classes() -> dict:
         errorMessage = Property(str, _get_error_message, notify=errorMessageChanged)
 
         def _get_selected_button_id(self) -> str:
-            return self._selected_button_id
+            return self._ui_state.selected_button_id
 
         selectedButtonId = Property(str, _get_selected_button_id, notify=selectedButtonIdChanged)
+
+        def _get_selected_button_display_name(self) -> str:
+            button_id = self._ui_state.selected_button_id
+            return remote_layout.BUTTON_DISPLAY_NAMES.get(button_id, button_id)
+
+        selectedButtonDisplayName = Property(
+            str,
+            _get_selected_button_display_name,
+            notify=selectedButtonIdChanged,
+        )
 
         def _get_device_options(self) -> List[str]:
             return [profile.display_name for profile in device_catalog.DEVICE_PROFILES]
@@ -1038,13 +1120,11 @@ def _load_qt_classes() -> dict:
         )
 
         def _get_selected_device_index(self) -> int:
-            return self._selected_device_index
+            return self._ui_state.selected_device_index
 
         def _set_selected_device_index(self, value: int) -> None:
-            if value == self._selected_device_index or not (0 <= value < len(self._DEVICE_ORDER)):
+            if not self._ui_state.set_selected_device_index(value):
                 return
-            self._selected_device_index = value
-            self._selected_device_fallback_id = self._DEVICE_ORDER[value]
             self.selectedDeviceIndexChanged.emit()
             self.selectedDeviceChanged.emit()
             if self._selected_device_id() == device_catalog.DJI_MIC_2_ID:
@@ -1122,6 +1202,7 @@ def _load_qt_classes() -> dict:
             return list(_PRESET_ACTION_OPTIONS)
 
         presetActionOptions = Property(list, _get_preset_action_options, constant=True)
+        secondaryActionOptions = Property(list, _get_preset_action_options, constant=True)
 
         def _get_mic_row_text(self) -> str:
             return settings_ui._MIC_ROW_DISPLAY
@@ -1245,6 +1326,17 @@ def _load_qt_classes() -> dict:
             self._set_launch_status("正在启动…")
             result = bridge_launcher.launch_bridge()
             self._set_launch_status(settings_ui.describe_launch_result(result))
+            if result.outcome is bridge_launcher.LaunchOutcome.STARTED:
+                if self._get_voice_preset_index() == 0:
+                    self._active_voice_preset_text = "Typeless（左 Ctrl + 左 Alt）"
+                else:
+                    self._active_voice_preset_text = f"自定义（{self._ui_state.hotkey_text}）"
+                self.activeVoicePresetTextChanged.emit()
+                self._set_status_message(
+                    f"已保存并切换到{self._active_voice_preset_text}桥接预设。"
+                )
+            else:
+                self._set_status_message("设置已保存，但桥接切换未完成。")
 
         @Slot()
         def restoreDefaults(self) -> None:
@@ -1280,10 +1372,11 @@ def _load_qt_classes() -> dict:
 
         @Slot(str)
         def selectButton(self, button_id: str) -> None:
-            if button_id == self._selected_button_id:
+            if not self._ui_state.select_button(button_id):
                 return
             self._model.set_selected_button(button_id)
-            self._selected_button_id = self._model.selected_button_id()
+            if self._model.selected_button_id() != self._ui_state.selected_button_id:
+                raise RuntimeError("native/PySide button selection diverged")
             self.selectedButtonIdChanged.emit()
 
         def _report_external_target(self, result) -> None:
@@ -1398,6 +1491,17 @@ def _load_qt_classes() -> dict:
 
         heatmapCells = Property(list, _get_heatmap_cells, notify=statisticsChanged)
 
+        def _get_month_blocks(self) -> List[dict]:
+            return list(self._snapshot.get("monthBlocks", []))
+
+        monthBlocks = Property(list, _get_month_blocks, notify=statisticsChanged)
+
+        currentMonthIndex = Property(
+            int,
+            lambda self: int(self._snapshot.get("currentMonthIndex", 0)),
+            notify=statisticsChanged,
+        )
+
         def _text(self, key: str) -> str:
             return str(self._snapshot.get(key, ""))
 
@@ -1418,6 +1522,9 @@ def _load_qt_classes() -> dict:
         )
         rangeText = Property(
             str, lambda self: self._text("rangeText"), notify=statisticsChanged
+        )
+        yearLabel = Property(
+            str, lambda self: self._text("yearLabel"), notify=statisticsChanged
         )
 
     class DiagnosticsController(QObject):

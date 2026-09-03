@@ -6,7 +6,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <mutex>
+#include <optional>
+#include <vector>
 
 #include "remotemic/bind/errors.hpp"
 #include "remotemic/bind/probe_types.hpp"
@@ -22,6 +25,7 @@
 #include "remotemic/interfaces/audio_route.hpp"
 #include "remotemic/audio/wasapi_audio_route.hpp"
 #include "remotemic/audio/fake_audio_route.hpp"
+#include "remotemic/audio/windows_voice_audio_policy_lease.hpp"
 #include "remotemic/audio/upsample_16k_to_48k.hpp"
 #include "remotemic/input/input_event.hpp"
 #include "remotemic/input/i_input_source.hpp"
@@ -30,6 +34,9 @@
 #include "remotemic/input/hotkey_physicalizer.hpp"
 #include "remotemic/input/fake_input_source.hpp"
 #include "remotemic/input/fake_host_action_sink.hpp"
+#include "remotemic/ble/winrt_ble_transport.hpp"
+#include "remotemic/app/application_coordinator.hpp"
+#include "remotemic/ui/settings_state.hpp"
 
 #ifdef _WIN32
 #include "remotemic/input/raw_input_source.hpp"
@@ -50,6 +57,9 @@ namespace py = pybind11;
 using namespace remotemic;
 namespace audio = remotemic::audio;
 namespace input = remotemic::input;
+namespace ble = remotemic::ble;
+namespace app = remotemic::app;
+namespace ui = remotemic::ui;
 
 // Phase 5 / ADR-0015 step 3 closure: IInputSource::set_event_sink takes
 // a C-style function pointer + opaque user_data. pybind11 cannot marshal
@@ -60,6 +70,8 @@ namespace input = remotemic::input;
 // raw_input_source.cpp:265-281 and low_level_keyboard_hook.cpp:222-236),
 // so taking the GIL inside it is safe per ADR-0015 §3.6's 5 us budget.
 namespace {
+PyObject* g_remote_mic_error_type = nullptr;  // owned by the extension module
+
 struct SinkHolder {
     // The Python callable, copied out under the mutex before invocation
     // so the sink setter can drop / replace its holder while the pump
@@ -171,6 +183,73 @@ void clear_input_source_sink_registry_entry(input::IInputSource& self) {
         old_holder->py_sink = py::object();
     }
 }
+
+// Phase 6 binding mailbox. WinRT callbacks never acquire the Python GIL:
+// the native transport copies each notification into this bounded queue and
+// Python polls it from its existing BLE worker thread. This also keeps all
+// Python objects out of WinRT callback lifetimes and interpreter shutdown.
+class NativeBleTransportMailbox final {
+public:
+    NativeBleTransportMailbox() {
+        transport_.set_bytes_received(
+            [this](IBleTransport::Channel channel,
+                   std::span<const std::uint8_t> bytes) {
+                push(Event{static_cast<int>(channel),
+                           std::vector<std::uint8_t>(bytes.begin(), bytes.end())});
+            });
+        transport_.set_disconnected([this] { push(Event{2, {}}); });
+    }
+
+    ~NativeBleTransportMailbox() {
+        transport_.disconnect();
+        transport_.set_bytes_received({});
+        transport_.set_disconnected({});
+    }
+
+    bool connect(const std::string& device_id) {
+        return transport_.connect(device_id);
+    }
+    void disconnect() noexcept { transport_.disconnect(); }
+    bool write(const std::vector<std::uint8_t>& bytes) {
+        return transport_.write(bytes);
+    }
+    bool connected() const noexcept { return transport_.connected(); }
+    std::size_t dropped_notification_count() const noexcept {
+        return transport_.dropped_notification_count() + mailbox_dropped_.load();
+    }
+    std::optional<std::pair<int, std::vector<std::uint8_t>>> poll_event() {
+        std::lock_guard lock{mutex_};
+        if (events_.empty()) {
+            return std::nullopt;
+        }
+        auto event = std::move(events_.front());
+        events_.pop_front();
+        return std::pair{event.kind, std::move(event.payload)};
+    }
+
+private:
+    struct Event {
+        int kind;
+        std::vector<std::uint8_t> payload;
+    };
+    void push(Event event) noexcept {
+        try {
+            std::lock_guard lock{mutex_};
+            if (events_.size() == 64) {
+                events_.pop_front();
+                ++mailbox_dropped_;
+            }
+            events_.push_back(std::move(event));
+        } catch (...) {
+            ++mailbox_dropped_;
+        }
+    }
+
+    ble::WinRTBleTransport transport_;
+    std::mutex mutex_;
+    std::deque<Event> events_;
+    std::atomic<std::size_t> mailbox_dropped_{0};
+};
 }  // namespace
 
 PYBIND11_MODULE(_C, m) {
@@ -184,7 +263,7 @@ PYBIND11_MODULE(_C, m) {
     // per project policy cpp-migration-version-policy.
     m.attr("__version__") = REMOTEMIC_VERSION;
 
-    // Drain the IInputSource sink registry at interpreter exit. Without
+    // Disarm the IInputSource sink registry at interpreter exit. Without
     // this hook the SinkHolder's py::object drops the Python callable's
     // refcount during C runtime finalization -- well after Python's
     // tstate is gone -- which trips a Fatal Python error. Registering
@@ -198,22 +277,18 @@ PYBIND11_MODULE(_C, m) {
         atexit_mod.attr("register")(py::cpp_function(
             +[]() {
                 py::gil_scoped_acquire gil;
-                std::unordered_map<input::IInputSource*,
-                                    std::shared_ptr<SinkHolder>>
-                    drained;
-                {
-                    std::lock_guard<std::mutex> lock(
-                        g_input_source_sink_registry_mu);
-                    for (auto& kv : g_input_source_sink_registry) {
-                        try {
-                            kv.first->set_event_sink(nullptr, nullptr);
-                        } catch (...) {
-                            // Source already destroyed; map cleared anyway.
-                        }
-                    }
-                    drained.swap(g_input_source_sink_registry);
-                }
-                for (auto& kv : drained) {
+                // Do NOT dereference the raw IInputSource keys here. A
+                // short-lived Python wrapper may already have destroyed
+                // its C++ source while its holder remains in the registry;
+                // calling set_event_sink through that stale key caused the
+                // Debug _C.pyd to access-violate after otherwise-green
+                // unittest runs. Keep each holder allocated until DLL
+                // teardown, but clear its Python object now while the GIL
+                // and thread state are valid. The trampoline sees armed=false
+                // and cannot touch the cleared object.
+                std::lock_guard<std::mutex> registry_lock(
+                    g_input_source_sink_registry_mu);
+                for (auto& kv : g_input_source_sink_registry) {
                     kv.second->armed.store(false, std::memory_order_release);
                     std::lock_guard<std::mutex> lock(kv.second->mu);
                     kv.second->py_sink = py::object();
@@ -221,15 +296,24 @@ PYBIND11_MODULE(_C, m) {
             }));
     }
 
+    auto remote_mic_error = py::reinterpret_steal<py::object>(
+        PyErr_NewException(
+            "remotemic_native._C.RemoteMicError",
+            PyExc_RuntimeError,
+            nullptr));
+    if (!remote_mic_error) {
+        throw py::error_already_set();
+    }
+    m.attr("RemoteMicError") = remote_mic_error;
+    g_remote_mic_error_type = remote_mic_error.ptr();
+
     // ------------------------------------------------------------------
     // Error translation. Per ADR-0011 §2:
     //   - std::invalid_argument becomes ValueError carrying what()
-    //   - remotemic::Error becomes a RuntimeError carrying what()
+    //   - remotemic::Error becomes RemoteMicError carrying what(), code,
+    //     and category
     //   - any other std::exception also becomes RuntimeError with what()
     //   - nothing is silently swallowed
-    // The dedicated `RemoteMicError` Python class with `code` attribute is
-    // deferred to the next iteration; the smoke gate only requires that
-    // `what()` survives the boundary and that the translator never crashes.
     // ------------------------------------------------------------------
     py::register_exception_translator([](std::exception_ptr p) {
         try {
@@ -242,11 +326,20 @@ PYBIND11_MODULE(_C, m) {
             // of [50ms, 500ms] in VoiceEdgeDebouncer).
             PyErr_SetString(PyExc_ValueError, e.what());
         } catch (const Error&) {
-            // Distinguish from generic std::exception by re-throwing inside.
             try {
                 throw;
             } catch (const Error& e) {
-                PyErr_SetString(PyExc_RuntimeError, e.what());
+                py::object instance = py::reinterpret_steal<py::object>(
+                    PyObject_CallFunction(
+                        g_remote_mic_error_type, "s", e.what()));
+                if (!instance) {
+                    return;  // PyObject_CallFunction already set an error
+                }
+                instance.attr("code") = py::int_(
+                    static_cast<int>(e.code()));
+                instance.attr("category") = py::str(
+                    error_category().name());
+                PyErr_SetObject(g_remote_mic_error_type, instance.ptr());
             }
         } catch (const std::exception& e) {
             PyErr_SetString(PyExc_RuntimeError, e.what());
@@ -915,7 +1008,23 @@ PYBIND11_MODULE(_C, m) {
         .def("current_format",
              &audio::WasapiAudioRoute::current_format,
              "The PcmFormat passed to the most recent successful\n"
-             "start(); default-constructed otherwise.");
+             "start(); default-constructed otherwise.")
+        .def("chunks_pushed_count",
+             &audio::WasapiAudioRoute::chunks_pushed_count,
+             "Number of chunks the writer successfully handed to\n"
+             "WASAPI ReleaseBuffer since construction.")
+        .def("output_sample_rate_hz",
+             &audio::WasapiAudioRoute::output_sample_rate_hz,
+             "The device rate negotiated by the last start()\n"
+             "(source rate when the device accepted it directly).")
+        .def("matched_endpoint_id",
+             &audio::WasapiAudioRoute::matched_endpoint_id,
+             "IMMDevice ID string of the endpoint resolved by the\n"
+             "last start(); empty when no start succeeded.")
+        .def("mix_channels", &audio::WasapiAudioRoute::mix_channels)
+        .def("mix_bits_per_sample", &audio::WasapiAudioRoute::mix_bits_per_sample)
+        .def("mix_is_float", &audio::WasapiAudioRoute::mix_is_float)
+        .def("session_volume_info", &audio::WasapiAudioRoute::session_volume_info);
 
     py::class_<audio::FakeAudioRoute, IAudioRoute,
                std::shared_ptr<audio::FakeAudioRoute>>(
@@ -1392,4 +1501,180 @@ PYBIND11_MODULE(_C, m) {
              "physicalizer currently holds down. Step 2 sub-pass A\n"
              "leaves this as a no-op; Phase 7 wires the real release\n"
              "surface through SendInputActionSink.");
+
+    // 14. Phase 6 BLE/WinRT transport. The event kind returned by
+    // poll_event() is 0=audio, 1=control, 2=disconnected. connect/write/
+    // disconnect release the GIL because WinRT async operations are awaited
+    // synchronously on the caller's asyncio.to_thread worker.
+    py::class_<NativeBleTransportMailbox>(m, "WinRTBleTransport")
+        .def(py::init<>())
+        .def("connect",
+             [](NativeBleTransportMailbox& self, const std::string& device_id) {
+                 py::gil_scoped_release release;
+                 return self.connect(device_id);
+             },
+             py::arg("device_id"))
+        .def("disconnect",
+             [](NativeBleTransportMailbox& self) {
+                 py::gil_scoped_release release;
+                 self.disconnect();
+             })
+        .def("write",
+             [](NativeBleTransportMailbox& self, py::bytes value) {
+                 const auto raw = value.cast<std::string>();
+                 const std::vector<std::uint8_t> bytes(raw.begin(), raw.end());
+                 py::gil_scoped_release release;
+                 return self.write(bytes);
+             },
+             py::arg("bytes"))
+        .def("poll_event", &NativeBleTransportMailbox::poll_event)
+        .def_property_readonly("connected", &NativeBleTransportMailbox::connected)
+        .def_property_readonly("dropped_notification_count",
+                               &NativeBleTransportMailbox::dropped_notification_count);
+
+    // 15. Phase 9 UI state behind the unchanged QML client. This object is
+    // Qt-independent: PySide6 owns signals/rendering and delegates state
+    // transitions here through the public binding surface.
+    py::class_<ui::SettingsState>(m, "UiSettingsState")
+        .def(py::init<std::string, int, std::vector<std::string>, int, int,
+                      std::vector<std::string>, std::string,
+                      std::vector<std::string>, std::string>(),
+             py::arg("hotkey_text"), py::arg("trigger_mode_index"),
+             py::arg("trigger_hotkeys"), py::arg("endpoint_count"),
+             py::arg("selected_endpoint_index"), py::arg("device_ids"),
+             py::arg("selected_device_id"), py::arg("button_ids"),
+             py::arg("selected_button_id"))
+        .def_property_readonly("hotkey_text", &ui::SettingsState::hotkey_text)
+        .def_property_readonly("trigger_mode_index",
+                               &ui::SettingsState::trigger_mode_index)
+        .def_property_readonly("selected_endpoint_index",
+                               &ui::SettingsState::selected_endpoint_index)
+        .def_property_readonly("selected_device_index",
+                               &ui::SettingsState::selected_device_index)
+        .def_property_readonly("selected_device_id",
+                               &ui::SettingsState::selected_device_id)
+        .def_property_readonly("selected_button_id",
+                               &ui::SettingsState::selected_button_id)
+        .def("set_hotkey_text", &ui::SettingsState::set_hotkey_text)
+        .def("set_trigger_mode_index", &ui::SettingsState::set_trigger_mode_index,
+             py::arg("value"), py::arg("replace_hotkey") = true)
+        .def("set_trigger_mode_preserving_hotkey",
+             &ui::SettingsState::set_trigger_mode_preserving_hotkey)
+        .def("set_endpoint_selection", &ui::SettingsState::set_endpoint_selection)
+        .def("set_selected_endpoint_index",
+             &ui::SettingsState::set_selected_endpoint_index)
+        .def("set_selected_device_index",
+             &ui::SettingsState::set_selected_device_index)
+        .def("select_button", &ui::SettingsState::select_button);
+
+    // 16. Phase 7 / ADR-0017 application lifecycle owner. Construction is
+    // side-effect free; execute(Start) acquires the adapters. Backend callback
+    // threads publish to the C++ mailbox and never call into Python.
+    py::enum_<app::CoordinatorState>(m, "CoordinatorState")
+        .value("Stopped", app::CoordinatorState::stopped)
+        .value("Starting", app::CoordinatorState::starting)
+        .value("Running", app::CoordinatorState::running)
+        .value("Stopping", app::CoordinatorState::stopping)
+        .value("Faulted", app::CoordinatorState::faulted);
+    py::enum_<app::CommandKind>(m, "CoordinatorCommandKind")
+        .value("Start", app::CommandKind::start)
+        .value("Stop", app::CommandKind::stop);
+    py::enum_<app::CommandStatus>(m, "CoordinatorCommandStatus")
+        .value("Completed", app::CommandStatus::completed)
+        .value("Duplicate", app::CommandStatus::duplicate)
+        .value("Failed", app::CommandStatus::failed);
+    py::enum_<app::CoordinatorEventKind>(m, "CoordinatorEventKind")
+        .value("Started", app::CoordinatorEventKind::started)
+        .value("Stopped", app::CoordinatorEventKind::stopped)
+        .value("Capabilities", app::CoordinatorEventKind::capabilities)
+        .value("MicButton", app::CoordinatorEventKind::mic_button)
+        .value("AudioStarted", app::CoordinatorEventKind::audio_started)
+        .value("AudioStopped", app::CoordinatorEventKind::audio_stopped)
+        .value("Disconnected", app::CoordinatorEventKind::disconnected)
+        .value("Input", app::CoordinatorEventKind::input)
+        .value("Error", app::CoordinatorEventKind::error);
+    py::class_<app::CommandResult>(m, "CoordinatorCommandResult")
+        .def_readonly("sequence", &app::CommandResult::sequence)
+        .def_readonly("status", &app::CommandResult::status)
+        .def_readonly("message", &app::CommandResult::message)
+        .def_property_readonly("ok", &app::CommandResult::ok);
+
+#ifdef _WIN32
+    py::class_<audio::WindowsVoiceAudioPolicyLease>(
+        m, "WindowsVoiceAudioPolicyLease")
+        .def(py::init<>())
+        .def("recover_stale", &audio::WindowsVoiceAudioPolicyLease::recover_stale)
+        .def("acquire", &audio::WindowsVoiceAudioPolicyLease::acquire)
+        .def("restore", &audio::WindowsVoiceAudioPolicyLease::restore)
+        .def("defaults_are_cable_output",
+             &audio::WindowsVoiceAudioPolicyLease::defaults_are_cable_output)
+        .def_property_readonly("active", &audio::WindowsVoiceAudioPolicyLease::active);
+    py::class_<app::ApplicationCoordinator>(m, "ApplicationCoordinator")
+        .def(py::init([](const std::string& device_id,
+                         const std::string& endpoint_name,
+                         const std::string& host_api_name,
+                         std::vector<std::uint16_t> voice_keys,
+                         voice::VoiceTriggerMode trigger_mode,
+                         double gain_db) {
+            auto to_wide = [](const std::string& text) {
+                if (text.empty()) return std::wstring{};
+                const int count = MultiByteToWideChar(
+                    CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                    nullptr, 0);
+                std::wstring result(static_cast<std::size_t>(count), L'\0');
+                MultiByteToWideChar(CP_UTF8, 0, text.data(),
+                                    static_cast<int>(text.size()),
+                                    result.data(), count);
+                return result;
+            };
+            app::CoordinatorConfig config{
+                .device_id = device_id, .voice_keys = std::move(voice_keys),
+                .trigger_mode = trigger_mode, .gain_db = gain_db,
+                .dispatch_default_input_actions = false,
+                .external_voice_edge_owner = true,
+                .external_voice_host_action_owner = true};
+            auto host_sink = std::make_shared<input::SendInputActionSink>(
+                config.voice_keys);
+            return std::make_unique<app::ApplicationCoordinator>(
+                std::make_shared<ble::WinRTBleTransport>(),
+                std::make_shared<audio::WasapiAudioRoute>(
+                    to_wide(endpoint_name), to_wide(host_api_name)),
+                std::make_shared<input::RawInputSource>(),
+                std::move(host_sink),
+                std::move(config),
+                std::make_shared<audio::WindowsVoiceAudioPolicyLease>());
+        }), py::arg("device_id"), py::arg("endpoint_name"),
+             py::arg("host_api_name") = "Windows WASAPI",
+             py::arg("voice_keys") = std::vector<std::uint16_t>{0x74},
+             py::arg("trigger_mode") = voice::VoiceTriggerMode::Toggle,
+             py::arg("gain_db") = 10.0)
+        .def("execute", [](app::ApplicationCoordinator& self,
+                            std::uint64_t sequence, app::CommandKind kind) {
+            py::gil_scoped_release release;
+            return self.execute(sequence, kind);
+        })
+        .def("stop", [](app::ApplicationCoordinator& self) {
+            py::gil_scoped_release release;
+            self.stop();
+        })
+        .def("handle_physical_mic_edge",
+             [](app::ApplicationCoordinator& self, bool pressed) {
+                 py::gil_scoped_release release;
+                 self.handle_physical_mic_edge(pressed);
+             }, py::arg("pressed"))
+        .def_property_readonly("state", &app::ApplicationCoordinator::state)
+        .def("poll_event", [](app::ApplicationCoordinator& self) -> py::object {
+            app::CoordinatorEvent event;
+            if (!self.poll_event(event)) return py::none();
+            py::dict result;
+            result["sequence"] = event.sequence;
+            result["kind"] = event.kind;
+            result["detail"] = event.detail;
+            return std::move(result);
+        })
+        .def_property_readonly("dropped_event_count",
+            &app::ApplicationCoordinator::dropped_event_count)
+        .def_property_readonly("audio_bytes_received",
+            &app::ApplicationCoordinator::audio_bytes_received);
+#endif
 }

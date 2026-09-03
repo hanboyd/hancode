@@ -357,4 +357,17 @@ class BackKeyCompatLayer(RC003HidReportTap):
 def injector_main(argv: list[str] | None = None) -> int:
     from .frida_hid_tap_injector import main
 
-    return main(argv)
+    try:
+        return main(argv)
+    except Exception:
+        # The packaged executable is a windowed PyInstaller build, so an
+        # uncaught helper exception would otherwise become a generic modal
+        # traceback with no durable evidence.  Keep the narrowly-scoped
+        # injector failure in the normal local application log and return a
+        # deterministic nonzero status; the bridge remains alive and retries.
+        from . import config, logging_setup
+
+        logging_setup.get_logger(config.config_root()).exception(
+            "RC003 HID injector helper failed"
+        )
+        return 1

@@ -310,6 +310,16 @@ class LegacyKeySuppressor:
         through with no latency.
         """
 
+        # F5 is the dedicated voice edge.  ``arm_key_event`` deliberately
+        # never arms it, so waiting here can never produce a match.  More
+        # importantly, WH_KEYBOARD_LL callbacks are serialized: waiting
+        # ~60 ms for every held-key auto-repeat lets the repeat stream build
+        # a backlog.  The queued repeats can then be delivered after the
+        # physical KeyUp and look like a brand-new press.  Route F5 straight
+        # to ``handle_key_event`` instead of stalling the hook thread.
+        if int(vk_code) == 0x74:
+            return False
+
         if self._rc003_vk_codes is not None and int(vk_code) not in self._rc003_vk_codes:
             return False
         effective_wait = (

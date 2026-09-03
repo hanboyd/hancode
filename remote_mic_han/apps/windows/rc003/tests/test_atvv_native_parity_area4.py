@@ -309,6 +309,12 @@ class AdpcmPostprocessNativeParityTests(unittest.TestCase):
                     f"fixture={name}: shadow != golden expected_output"
                 )
 
+    def test_postprocess_each_window_reads_original_samples(self) -> None:
+        samples = [1000, -2000, 3000, -4000, 5000, -6000]
+        py_result, bridge_result = self._drive(samples, 0.0)
+        self.assertEqual(py_result, [1000, 0, 0, 0, 0, -6000])
+        self.assertEqual(bridge_result, py_result)
+
 
 class AdpcmFrameAccumulatorNativeParityTests(unittest.TestCase):
     @classmethod

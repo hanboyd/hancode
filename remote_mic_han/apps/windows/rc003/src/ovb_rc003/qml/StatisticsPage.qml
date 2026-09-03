@@ -6,7 +6,14 @@ import OvbRc003Settings 1.0
 Item {
     id: root
     property var tokens
-    property int selectedMetric: 0 // 0 = voice duration, 1 = trigger frequency
+    property int selectedMetric: 0
+
+    readonly property int cellWidth: 16
+    readonly property int cellHeight: 20
+    readonly property int cellGap: 5
+    readonly property int columnPitch: cellWidth + cellGap
+    readonly property int rowPitch: cellHeight + cellGap
+    readonly property int monthLabelHeight: 28
 
     function heatColor(level, future) {
         if (future) return Qt.rgba(tokens.textPrimary.r, tokens.textPrimary.g, tokens.textPrimary.b, 0.025)
@@ -17,8 +24,24 @@ Item {
         return tokens.accent
     }
 
+    function alignCurrentMonth() {
+        Qt.callLater(function() {
+            var current = monthRepeater.itemAt(UsageStatisticsController.currentMonthIndex)
+            if (current)
+                monthFlick.contentX = Math.max(0, current.x)
+        })
+    }
+
     onVisibleChanged: {
-        if (visible) UsageStatisticsController.refresh()
+        if (visible) {
+            UsageStatisticsController.refresh()
+            alignCurrentMonth()
+        }
+    }
+
+    Connections {
+        target: UsageStatisticsController
+        function onStatisticsChanged() { root.alignCurrentMonth() }
     }
 
     ScrollView {
@@ -34,43 +57,16 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                Label {
-                    Layout.fillWidth: true
-                    text: qsTr("按天聚合过去一年的遥控器使用情况。")
-                    color: tokens.textSecondary
-                    font.pixelSize: tokens.fontSizeSmall
-                }
-                Rectangle {
-                    radius: 999
-                    color: tokens.successBackground
-                    implicitWidth: privacyLabel.implicitWidth + 22
-                    implicitHeight: privacyLabel.implicitHeight + 10
-                    Label {
-                        id: privacyLabel
-                        anchors.centerIn: parent
-                        text: qsTr("仅保存在本机")
-                        color: tokens.successColor
-                        font.pixelSize: tokens.fontSizeSmall
-                        font.bold: true
-                    }
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
                 spacing: tokens.spacingMedium
                 Repeater {
                     model: [
-                        { label: qsTr("今天语音"), value: UsageStatisticsController.todayDuration,
-                            note: UsageStatisticsController.todayFrequency },
-                        { label: qsTr("最近一年"), value: UsageStatisticsController.yearDuration,
-                            note: UsageStatisticsController.yearFrequency },
-                        { label: qsTr("活跃天数"), value: UsageStatisticsController.activeDays,
-                            note: qsTr("过去 365 天") }
+                        { label: qsTr("今日语音时长"), value: UsageStatisticsController.todayDuration },
+                        { label: qsTr("今日触发次数"), value: UsageStatisticsController.todayFrequency },
+                        { label: qsTr("本年活跃"), value: UsageStatisticsController.activeDays }
                     ]
                     delegate: Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 108
+                        Layout.preferredHeight: 100
                         radius: tokens.cornerRadiusLarge
                         color: tokens.surface
                         border.color: tokens.border
@@ -79,9 +75,17 @@ Item {
                             anchors.fill: parent
                             anchors.margins: tokens.spacingMedium
                             spacing: tokens.spacingTiny
-                            Label { text: modelData.label; color: tokens.textSecondary; font.pixelSize: tokens.fontSizeSmall }
-                            Label { text: modelData.value; color: tokens.textPrimary; font.pixelSize: 24; font.bold: true }
-                            Label { text: modelData.note; color: tokens.textSecondary; font.pixelSize: tokens.fontSizeSmall }
+                            Label {
+                                text: modelData.label
+                                color: tokens.textSecondary
+                                font.pixelSize: tokens.fontSizeSmall
+                            }
+                            Label {
+                                text: modelData.value
+                                color: tokens.accent
+                                font.pixelSize: 24
+                                font.bold: true
+                            }
                         }
                     }
                 }
@@ -89,7 +93,7 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 326
+                Layout.preferredHeight: 360
                 radius: tokens.cornerRadiusLarge
                 color: tokens.surface
                 border.color: tokens.border
@@ -102,66 +106,126 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
+                        spacing: tokens.spacingMedium
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: tokens.spacingTiny
-                            Label { text: qsTr("每日使用"); color: tokens.textPrimary; font.pixelSize: tokens.fontSizeTitle; font.bold: true }
-                            Label { text: qsTr("颜色越深，当天使用越多"); color: tokens.textSecondary; font.pixelSize: tokens.fontSizeSmall }
+                            Label {
+                                text: UsageStatisticsController.yearLabel + qsTr(" 年使用")
+                                color: tokens.textPrimary
+                                font.pixelSize: tokens.fontSizeTitle
+                                font.bold: true
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: qsTr("横轴为 1 月至 12 月；可左右滑动，进入页面时当前月份位于最左侧。纵轴严格对应周一至周日。")
+                                color: tokens.textSecondary
+                                font.pixelSize: tokens.fontSizeSmall
+                            }
                         }
                         Button {
                             text: qsTr("语音时长")
                             checkable: true
                             checked: root.selectedMetric === 0
+                            highlighted: checked
                             onClicked: root.selectedMetric = 0
                         }
                         Button {
                             text: qsTr("触发次数")
                             checkable: true
                             checked: root.selectedMetric === 1
+                            highlighted: checked
                             onClicked: root.selectedMetric = 1
                         }
                     }
 
-                    Item {
+                    RowLayout {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 152
+                        Layout.preferredHeight: root.monthLabelHeight + root.rowPitch * 6 + root.cellHeight
+                        spacing: tokens.spacingSmall
 
                         Column {
-                            x: 0
-                            y: 19
-                            spacing: 19
-                            Label { text: qsTr("周一"); color: tokens.textSecondary; font.pixelSize: 13 }
-                            Label { text: qsTr("周三"); color: tokens.textSecondary; font.pixelSize: 13 }
-                            Label { text: qsTr("周五"); color: tokens.textSecondary; font.pixelSize: 13 }
+                            Layout.preferredWidth: 58
+                            Layout.fillHeight: true
+                            spacing: root.cellGap
+                            Item { width: 1; height: root.monthLabelHeight - root.cellGap }
+                            Repeater {
+                                model: [qsTr("周一"), qsTr("周二"), qsTr("周三"), qsTr("周四"), qsTr("周五"), qsTr("周六"), qsTr("周日")]
+                                delegate: Label {
+                                    width: 58
+                                    height: root.cellHeight
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: modelData
+                                    color: tokens.textSecondary
+                                    font.pixelSize: tokens.fontSizeSmall
+                                }
+                            }
                         }
 
-                        Item {
-                            id: heatmap
-                            x: 42
-                            width: parent.width - 42
-                            height: parent.height
-                            readonly property real pitch: Math.min(13, (width - 1) / 53)
-                            readonly property real cellSize: Math.max(7, pitch - 3)
+                        Flickable {
+                            id: monthFlick
+                            objectName: "statisticsMonthFlick"
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            flickableDirection: Flickable.HorizontalFlick
+                            boundsBehavior: Flickable.StopAtBounds
+                            contentWidth: yearRow.width
+                            contentHeight: height
 
-                            Repeater {
-                                model: UsageStatisticsController.heatmapCells
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    x: modelData.weekIndex * heatmap.pitch
-                                    y: 18 + modelData.dayIndex * heatmap.pitch
-                                    width: heatmap.cellSize
-                                    height: heatmap.cellSize
-                                    radius: 2
-                                    color: root.heatColor(
-                                        root.selectedMetric === 0 ? modelData.durationLevel : modelData.frequencyLevel,
-                                        modelData.isFuture
-                                    )
-                                    border.color: Qt.rgba(tokens.textPrimary.r, tokens.textPrimary.g, tokens.textPrimary.b, 0.07)
-                                    border.width: 1
-                                    ToolTip.visible: hover.containsMouse && !modelData.isFuture
-                                    ToolTip.text: modelData.date + " · "
-                                        + (root.selectedMetric === 0 ? modelData.durationText : modelData.frequencyText)
-                                    MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true }
+                            ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                            Row {
+                                id: yearRow
+                                height: parent.height
+                                spacing: 30
+
+                                Repeater {
+                                    id: monthRepeater
+                                    model: UsageStatisticsController.monthBlocks
+                                    delegate: Item {
+                                        id: monthBlock
+                                        required property var modelData
+                                        width: modelData.weekCount * root.columnPitch - root.cellGap
+                                        height: yearRow.height
+
+                                        Label {
+                                            height: root.monthLabelHeight
+                                            text: monthBlock.modelData.label
+                                            verticalAlignment: Text.AlignTop
+                                            color: tokens.textPrimary
+                                            font.pixelSize: tokens.fontSizeSmall
+                                            font.bold: true
+                                        }
+
+                                        Repeater {
+                                            model: monthBlock.modelData.cells
+                                            delegate: Rectangle {
+                                                required property var modelData
+                                                x: modelData.weekIndex * root.columnPitch
+                                                y: root.monthLabelHeight + modelData.dayIndex * root.rowPitch
+                                                width: root.cellWidth
+                                                height: root.cellHeight
+                                                radius: 3
+                                                color: root.heatColor(
+                                                    root.selectedMetric === 0 ? modelData.durationLevel : modelData.frequencyLevel,
+                                                    modelData.isFuture
+                                                )
+                                                border.color: Qt.rgba(tokens.textPrimary.r, tokens.textPrimary.g, tokens.textPrimary.b, 0.07)
+                                                border.width: 1
+                                                ToolTip.visible: hover.containsMouse && !modelData.isFuture
+                                                ToolTip.text: modelData.date + " · "
+                                                    + (root.selectedMetric === 0 ? modelData.durationText : modelData.frequencyText)
+                                                MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Item {
+                                    width: Math.max(0, monthFlick.width - 80)
+                                    height: 1
                                 }
                             }
                         }
@@ -169,29 +233,44 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { Layout.fillWidth: true; text: UsageStatisticsController.rangeText; color: tokens.textSecondary; font.pixelSize: tokens.fontSizeSmall }
-                        Label { text: qsTr("少"); color: tokens.textSecondary; font.pixelSize: 13 }
+                        Label {
+                            Layout.fillWidth: true
+                            text: UsageStatisticsController.rangeText
+                            color: tokens.textSecondary
+                            font.pixelSize: tokens.fontSizeSmall
+                        }
+                        Label { text: qsTr("少"); color: tokens.textSecondary; font.pixelSize: tokens.fontSizeSmall }
                         Repeater {
                             model: 5
                             delegate: Rectangle {
-                                width: 11; height: 11; radius: 2
+                                width: 14
+                                height: 14
+                                radius: 3
                                 color: root.heatColor(index, false)
                                 border.color: tokens.border
                             }
                         }
-                        Label { text: qsTr("多"); color: tokens.textSecondary; font.pixelSize: 13 }
+                        Label { text: qsTr("多"); color: tokens.textSecondary; font.pixelSize: tokens.fontSizeSmall }
                     }
                 }
             }
 
-            Label {
+            Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: implicitHeight
-                wrapMode: Text.WordWrap
-                text: qsTr("隐私说明：只记录每天累计的遥控器按键次数、语音会话次数和语音时长；不保存文字、音频、应用名称或设备标识。")
-                color: tokens.textSecondary
-                font.pixelSize: tokens.fontSizeSmall
+                implicitHeight: privacyText.implicitHeight + tokens.spacingMedium * 2
+                radius: tokens.cornerRadiusSmall
+                color: tokens.fieldBackground
+                Label {
+                    id: privacyText
+                    anchors.fill: parent
+                    anchors.margins: tokens.spacingMedium
+                    wrapMode: Text.WordWrap
+                    text: qsTr("隐私说明：只保存每天累计的按键次数、语音会话次数和语音时长；不保存音频、转写文字、应用名称或设备标识。")
+                    color: tokens.textSecondary
+                    font.pixelSize: tokens.fontSizeSmall
+                }
             }
+
             Item { Layout.preferredHeight: tokens.spacingMedium }
         }
     }

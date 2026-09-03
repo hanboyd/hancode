@@ -52,14 +52,31 @@ class _NativeATVVSession:
 
     @property
     def capabilities(self):
-        return self._impl.capabilities
+        caps = self._impl.capabilities
+        if not self._is_native or caps is None:
+            return caps
+        return py_mod.proto.ATVVCapabilities(
+            version=caps.version,
+            codecs=caps.codecs,
+            interaction=caps.interaction,
+            frame_size=caps.frame_size,
+            selected_codec=caps.selected_codec,
+            sample_rate=caps.sample_rate,
+        )
 
     @property
     def mic_open(self) -> bool:
         return bool(self._impl.mic_open)
 
     def handle_control(self, payload: bytes):
-        return self._impl.handle_control(payload)
+        try:
+            event = self._impl.handle_control(payload)
+        except ValueError as exc:
+            message = str(exc)
+            if "unsupported ATVV sample rate" in message:
+                raise py_mod.UnsupportedSampleRateError(message) from exc
+            raise py_mod.ATVVProtocolError(message) from exc
+        return _dict_to_event(event) if self._is_native else event
 
     def handle_audio(self, payload: bytes):
         return list(self._impl.handle_audio(payload))
@@ -126,12 +143,13 @@ class _ShadowATVVSession:
 
     def handle_control(self, payload: bytes):
         py_event = self._py.handle_control(payload)
-        native_dict = self._native.handle_control(payload)
+        native_event = self._native.handle_control(payload)
         # Normalize native dict to a comparable form. The native
         # binding always returns a dict with opcode + per-opcode
         # fields; python returns one of the dataclasses. Convert the
         # python dataclass to the same dict shape for comparison.
         py_dict = _event_to_dict(py_event)
+        native_dict = _event_to_dict(native_event)
         if py_dict != native_dict:
             raise RuntimeError(
                 f"shadow(atvv_session).handle_control: "
@@ -213,6 +231,44 @@ def _event_to_dict(event: object) -> dict:
     if isinstance(event, py_mod.UnknownControl):
         return {"opcode": "Unknown", "raw_opcode": event.opcode}
     return {"opcode": repr(event)}
+
+
+def _dict_to_event(event: object) -> object:
+    """Translate the binding's stable dict ABI back to the Python event ABI.
+
+    ``app.py`` deliberately dispatches with ``isinstance`` against these
+    dataclasses. Returning the raw binding dict made native mode connect and
+    decode successfully while silently ignoring CAPS/AUDIO_START/AUDIO_STOP
+    in the actual product path.
+    """
+    if not isinstance(event, dict):
+        return event
+    opcode = event.get("opcode")
+    if opcode == "Caps":
+        caps = event.get("capabilities")
+        if caps is None:
+            raise py_mod.ATVVProtocolError("native CAPS event omitted capabilities")
+        return py_mod.CapsReceived(
+            py_mod.proto.ATVVCapabilities(
+                version=int(caps.version),
+                codecs=int(caps.codecs),
+                interaction=int(caps.interaction),
+                frame_size=int(caps.frame_size),
+                selected_codec=int(caps.selected_codec),
+                sample_rate=float(caps.sample_rate),
+            )
+        )
+    if opcode == "MicButton":
+        return py_mod.MicButtonPressed()
+    if opcode == "AudioStart":
+        return py_mod.AudioStarted(session_id=event.get("session_id"))
+    if opcode == "AudioStop":
+        return py_mod.AudioStopped()
+    if opcode == "AudioSync":
+        return py_mod.AudioSynced()
+    if opcode == "Unknown":
+        return py_mod.UnknownControl(opcode=int(event.get("raw_opcode", 0)))
+    raise py_mod.ATVVProtocolError(f"unknown native control event: {opcode!r}")
 
 
 make_atvv_session = choose_implementation(

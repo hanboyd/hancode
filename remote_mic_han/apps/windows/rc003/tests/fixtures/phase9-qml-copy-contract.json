@@ -1,0 +1,12 @@
+{
+  "ButtonsPage.qml": "02d5a41c23a848257fa510b383eb54731cba5ad6df1d2f8cf376582c739cc4d9",
+  "ConnectionPage.qml": "18d76b2422676ef31b0a3e9d479672ec7e26747665cff735be9c44e8a6152120",
+  "DiagnosticsPage.qml": "8bf2f6520f869a16ddc6641d04575128fc65f591b445675c95663ec2daddc918",
+  "PermissionsPage.qml": "5e194fc903977741302791abaf9e6fe10e8256771763d58241de565585e4b4d2",
+  "StatisticsPage.qml": "90244bb71cb2db9c3b28b8f10cda84304eb407404f901e1ab5430883f4a61be7",
+  "Tokens.qml": "f1e7b926cbe538e703d3ac2bed4744f5072dcaf8dc23605336dceecb15e7a8fe",
+  "components/DsCard.qml": "19ccbb1dd94f5ddae13dd9f90b49ced0afa85ad7ed119ed72c7c0e6cb7a9f3cd",
+  "components/DsDivider.qml": "33c5fa08aa0a26f34f4720b1c96d0c7ac2677cc670f28d87cc4d0d8662d39d1e",
+  "components/DsStatusPill.qml": "bf74d025e0f314645acc3a97fc5ccd697c4d9288f256240092d61dc2827ba9cd",
+  "main.qml": "951d2fdb6eb43c5c8df3b2a64eac96f3aa69619d49a0b68342e64a1684420765"
+}

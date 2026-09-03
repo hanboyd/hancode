@@ -22,11 +22,13 @@ import OvbRc003Settings 1.0
 ApplicationWindow {
     id: window
     title: qsTr("Remote Mic 设置")
-    width: 1020
-    height: 740
+    width: 1180
+    height: 820
     minimumWidth: 900
-    minimumHeight: 640
+    minimumHeight: 680
     visible: true
+    font.family: "Microsoft YaHei UI"
+    font.pixelSize: 16
 
     property Tokens tokens: Tokens {}
 

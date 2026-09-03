@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace remotemic::adpcm {
 
@@ -46,13 +47,18 @@ inline std::int16_t clamp_int16(double value) noexcept {
 }  // namespace
 
 DcHighPassFilter::DcHighPassFilter(
-    double sample_rate, double cutoff_hz) noexcept
+    double sample_rate, double cutoff_hz)
     : sample_rate_(sample_rate),
       cutoff_hz_(cutoff_hz),
       alpha_(std::exp(-2.0 * kPi * cutoff_hz / sample_rate)),
       previous_input_(0.0),
       previous_output_(0.0),
-      initialized_(false) {}
+      initialized_(false) {
+    if (sample_rate <= 0.0 || cutoff_hz <= 0.0) {
+        throw std::invalid_argument(
+            "sample_rate and cutoff_hz must be positive");
+    }
+}
 
 void DcHighPassFilter::reset() noexcept {
     previous_input_ = 0.0;

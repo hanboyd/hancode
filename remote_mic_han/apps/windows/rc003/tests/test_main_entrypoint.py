@@ -90,7 +90,7 @@ class BridgeModeRoutingTests(_ArgvRestoringTestCase):
 
     def test_bridge_flag_calls_app_main_exactly_once_on_first_owner(self):
         app_main_calls = []
-        app.main = lambda: app_main_calls.append(1)
+        app.main = lambda _stop_signal=None: app_main_calls.append(1)
         single_instance.BridgeInstanceGuard = _make_guard_class()
         sys.argv = ["ovb_rc003", "--bridge"]
 
@@ -100,7 +100,7 @@ class BridgeModeRoutingTests(_ArgvRestoringTestCase):
 
     def test_duplicate_launch_never_calls_app_main(self):
         app_main_calls = []
-        app.main = lambda: app_main_calls.append(1)
+        app.main = lambda _stop_signal=None: app_main_calls.append(1)
         single_instance.BridgeInstanceGuard = _make_guard_class(
             raise_on_enter=single_instance.DuplicateInstanceError("already running")
         )
@@ -195,7 +195,7 @@ class BridgeModeRoutingTests(_ArgvRestoringTestCase):
         # exit, since the packaged executable is windowed (console=False)
         # and an unhandled exception's traceback is otherwise never seen.
         app_main_calls = []
-        app.main = lambda: app_main_calls.append(1)
+        app.main = lambda _stop_signal=None: app_main_calls.append(1)
 
         class _CleanupFailingGuard:
             def __enter__(self):
@@ -264,6 +264,32 @@ class ArgumentModeBypassTests(_ArgvRestoringTestCase):
 
         self.assertEqual(ctx.exception.code, 0)
         self.assertEqual(enter_calls, [])
+
+    def test_qt_runtime_smoke_isolated_from_bridge_and_settings_guards(self):
+        bridge_enter_calls = []
+        settings_enter_calls = []
+        single_instance.BridgeInstanceGuard = _make_guard_class(
+            enter_calls=bridge_enter_calls
+        )
+        single_instance.SettingsInstanceGuard = _make_guard_class(
+            enter_calls=settings_enter_calls
+        )
+        app.main = lambda: self.fail("Qt smoke must never call app.main()")
+        original_smoke = main_module._qt_runtime_smoke
+        smoke_calls = []
+        main_module._qt_runtime_smoke = lambda: smoke_calls.append(1) or 0
+        sys.argv = ["ovb_rc003", "--qt-runtime-smoke"]
+
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                main_module.main()
+        finally:
+            main_module._qt_runtime_smoke = original_smoke
+
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertEqual(smoke_calls, [1])
+        self.assertEqual(bridge_enter_calls, [])
+        self.assertEqual(settings_enter_calls, [])
 
     def test_help_never_touches_the_guard(self):
         enter_calls = []

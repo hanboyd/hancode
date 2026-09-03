@@ -24,7 +24,7 @@
 
 #define AppName "Remote Mic · RC003"
 #define AppPublisher "Remote Mic contributors"
-#define AppVersion "0.1.0-candidate"
+#define AppVersion "1.0.0"
 #define AppExeName "RemoteMicRC003.exe"
 #define AppFolder "RC003"
 #define DistDir "..\dist\RemoteMicRC003"
@@ -93,16 +93,76 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 Filename: "{app}\{#AppExeName}"; Parameters: "--settings"; Description: "打开 {#AppName} 设置"; Flags: postinstall nowait skipifsilent unchecked
 
 [UninstallRun]
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\stop-app.ps1"" -AppPath ""{app}"""; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{app}\stop-app.ps1"" -AppPath ""{app}"""; Flags: runhidden; RunOnceId: "StopRemoteMicBridge"
 
 [Code]
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
+  LegacyAppDir: String;
+  LegacyDll: String;
 begin
   Result := '';
   ExtractTemporaryFile('stop-app.ps1');
   Exec('powershell.exe',
     '-ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\stop-app.ps1') + '" -AppPath "' + ExpandConstant('{app}') + '"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  { Pre-1.0 installers placed a complete frozen program under the app subfolder.
+    Remove only that exact, marker-verified legacy program directory. Never
+    delete the installation root itself: config.json, key_bindings.json, logs and captures are
+    user data shared by installed and portable builds. }
+  LegacyAppDir := ExpandConstant('{app}\app');
+  if DirExists(LegacyAppDir) then
+  begin
+    if FileExists(LegacyAppDir + '\RemoteMicRC003.exe') and
+       DirExists(LegacyAppDir + '\_internal') then
+    begin
+      Log('Removing marker-verified pre-0.8 legacy app directory: ' + LegacyAppDir);
+      if not DelTree(LegacyAppDir, True, True, True) then
+      begin
+        Result := '无法安全清理旧版程序目录：' + LegacyAppDir +
+          '. 安装已停止；用户配置和日志未被删除。';
+        Exit;
+      end;
+    end
+    else
+      Log('Leaving unrecognized app directory untouched: ' + LegacyAppDir);
+  end;
+
+  { Older candidate packages could leave Poppler ICU DLLs in the shared
+    installation root. They are not part of the current frozen build and can
+    hijack Qt's DLL resolution, so remove only these two exact legacy names. }
+  LegacyDll := ExpandConstant('{app}\icuuc.dll');
+  if FileExists(LegacyDll) then
+  begin
+    if DeleteFile(LegacyDll) then
+      Log('Removed marker-verified legacy DLL: ' + LegacyDll)
+    else
+      Log('Could not remove legacy DLL (continuing): ' + LegacyDll);
+  end;
+  LegacyDll := ExpandConstant('{app}\icudt78.dll');
+  if FileExists(LegacyDll) then
+  begin
+    if DeleteFile(LegacyDll) then
+      Log('Removed marker-verified legacy DLL: ' + LegacyDll)
+    else
+      Log('Could not remove legacy DLL (continuing): ' + LegacyDll);
+  end;
+  LegacyDll := ExpandConstant('{app}\_internal\icuuc.dll');
+  if FileExists(LegacyDll) then
+  begin
+    if DeleteFile(LegacyDll) then
+      Log('Removed marker-verified legacy Qt DLL: ' + LegacyDll)
+    else
+      Log('Could not remove legacy Qt DLL (continuing): ' + LegacyDll);
+  end;
+  LegacyDll := ExpandConstant('{app}\_internal\icudt78.dll');
+  if FileExists(LegacyDll) then
+  begin
+    if DeleteFile(LegacyDll) then
+      Log('Removed marker-verified legacy Qt DLL: ' + LegacyDll)
+    else
+      Log('Could not remove legacy Qt DLL (continuing): ' + LegacyDll);
+  end;
 end;

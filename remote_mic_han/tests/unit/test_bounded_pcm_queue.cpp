@@ -88,6 +88,19 @@ void test_push_empty_span_is_noop() {
     expect(q.dropped_count() == 0, "dropped_count stays 0 after empty push");
 }
 
+void test_oversized_push_keeps_newest_without_out_of_range_erase() {
+    BoundedPcmQueue q(/*capacity_samples=*/4);
+    std::vector<std::int16_t> old{90, 91};
+    q.push(std::span<const std::int16_t>(old));
+    std::vector<std::int16_t> incoming{1, 2, 3, 4, 5, 6};
+    const auto dropped = q.push(std::span<const std::int16_t>(incoming));
+    expect(dropped == 4, "oversized push drops old queue plus old input prefix");
+    expect(q.dropped_count() == 4, "oversized drops are counted exactly");
+    const auto popped = q.pop_up_to(10);
+    expect(popped == std::vector<std::int16_t>({3, 4, 5, 6}),
+           "oversized push retains newest capacity samples");
+}
+
 }  // namespace
 
 int main() {
@@ -96,6 +109,7 @@ int main() {
     test_overflow_drops_oldest_and_counts_them();
     test_zero_capacity_throws();
     test_push_empty_span_is_noop();
+    test_oversized_push_keeps_newest_without_out_of_range_erase();
 
     if (failures != 0) {
         std::cerr << "BoundedPcmQueue tests: " << failures

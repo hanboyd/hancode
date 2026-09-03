@@ -195,6 +195,19 @@ class PyInstallerSpecTests(unittest.TestCase):
         text = _SPEC_PATH.read_text(encoding="utf-8")
         ast.parse(text, filename=str(_SPEC_PATH))  # raises SyntaxError on failure
 
+    def test_spec_excludes_build_host_icu_that_breaks_frozen_qtcore(self):
+        text = _strip_hash_comments(_SPEC_PATH.read_text(encoding="utf-8"))
+        self.assertIn("FOREIGN_BUILD_HOST_ICU_DLLS", text)
+        self.assertIn('"icuuc.dll"', text)
+        self.assertIn('"icudt78.dll"', text)
+        self.assertIn("a.binaries = type(a.binaries)", text)
+
+    def test_build_runs_frozen_qt_runtime_smoke_after_pyinstaller(self):
+        text = _BUILD_CANDIDATE_PATH.read_text(encoding="utf-8")
+        pyinstaller_index = text.index("PyInstaller build (unsigned candidate)")
+        qt_smoke_index = text.index("--qt-runtime-smoke")
+        self.assertGreater(qt_smoke_index, pyinstaller_index)
+
     def test_spec_excludes_other_device_bridges(self):
         text = _SPEC_PATH.read_text(encoding="utf-8")
         self.assertIn("bridges.t1", text)
@@ -350,6 +363,15 @@ class InnoSetupScriptTests(unittest.TestCase):
 
     def test_uninstall_run_stops_the_app_first(self):
         self.assertIn("stop-app.ps1", self.text)
+
+    def test_upgrade_removes_only_marker_verified_pre_08_app_subdirectory(self):
+        code_section = _iss_section(self.text, "Code")
+        self.assertIn("LegacyAppDir := ExpandConstant('{app}\\app')", code_section)
+        self.assertIn("FileExists(LegacyAppDir + '\\RemoteMicRC003.exe')", code_section)
+        self.assertIn("DirExists(LegacyAppDir + '\\_internal')", code_section)
+        self.assertIn("DelTree(LegacyAppDir, True, True, True)", code_section)
+        self.assertNotIn("DelTree(ExpandConstant('{app}')", code_section)
+        self.assertIn("用户配置和日志未被删除", code_section)
 
     def test_stop_app_script_is_both_temp_extractable_and_permanently_installed(self):
         # XRBM-022: the round-1 defect was that stop-app.ps1 only had a

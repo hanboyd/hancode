@@ -137,6 +137,17 @@ int main() {
     run_postprocess_fixture("postprocess-clamp-to-int16.json");
     run_postprocess_fixture("postprocess-two-samples-no-smoothing.json");
 
+    // Regression: every 3-tap window must read the original input,
+    // not the previously smoothed output.  The old recursive loop
+    // produced [1000, 0, 500, -625, 843, -6000].
+    const std::vector<std::int16_t> alternating = {
+        1000, -2000, 3000, -4000, 5000, -6000};
+    const std::vector<std::int16_t> alternating_expected = {
+        1000, 0, 0, 0, 0, -6000};
+    expect(
+        postprocess(alternating, 0.0) == alternating_expected,
+        "3-tap smoothing reads immutable source samples");
+
     if (failures == 0) {
         std::cout << "All adpcm_postprocess tests passed\n";
         return 0;

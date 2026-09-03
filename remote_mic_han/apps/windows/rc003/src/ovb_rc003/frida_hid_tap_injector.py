@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 from ctypes import wintypes
+import json
 import os
 from pathlib import Path
 
@@ -277,8 +278,29 @@ def inject_current_process(pid: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--pid", type=int, required=True)
+    parser.add_argument("--result-path")
     args = parser.parse_args(argv)
-    inject_current_process(args.pid)
+    try:
+        inject_current_process(args.pid)
+    except Exception as exc:
+        if args.result_path:
+            Path(args.result_path).write_text(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        raise
+    if args.result_path:
+        Path(args.result_path).write_text(
+            json.dumps({"ok": True, "pid": args.pid}),
+            encoding="utf-8",
+        )
     return 0
 
 

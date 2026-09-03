@@ -50,6 +50,7 @@ from __future__ import annotations
 import importlib
 import os
 import unittest
+from unittest import mock
 
 
 _PHASE4_KEY = "REMOTEMIC_NATIVE_CHOICE_AUDIO_ROUTE"
@@ -182,6 +183,30 @@ class NativeDispatchTests(_EnvCase):
         # The shim holds exactly one wrapped instance on ``_impl``.
         self.assertTrue(hasattr(shim, "_impl"))
         self.assertIsNotNone(shim._impl)
+
+    def test_missing_extension_fallback_opens_python_sink(self) -> None:
+        mod = _factory_module()
+        import remotemic_native as rn
+
+        calls = []
+
+        class _FakePythonSink:
+            def __init__(self, endpoint, host_api) -> None:
+                calls.append(("init", endpoint, host_api))
+
+            def open(self) -> None:
+                calls.append(("open",))
+
+        with mock.patch.object(rn, "_C_AVAILABLE", False), \
+             mock.patch.object(
+                 mod.py_mod, "EndpointPlaybackSink", _FakePythonSink
+             ):
+            shim = mod._NativeAudioRoute("fallback", "test")
+            shim.open()
+
+        self.assertEqual(
+            calls, [("init", "fallback", "test"), ("open",)]
+        )
 
     def test_native_shim_reaches_cpp_side_when_binding_built(self) -> None:
         # When ``_C.pyd`` is built and available, the shim must

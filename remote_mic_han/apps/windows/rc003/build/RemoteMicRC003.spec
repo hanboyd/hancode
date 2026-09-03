@@ -203,6 +203,21 @@ a = Analysis(
     noarchive=False,
 )
 
+# The Codex workspace adds Poppler's private DLL directory to PATH. PyInstaller
+# follows Qt6Core.dll's unversioned ``icuuc.dll`` dependency through that PATH
+# and otherwise bundles Poppler's ICU 78 beside the executable. PySide6 6.11's
+# Windows Qt build uses the Windows system ICU ABI; loading the Poppler DLL
+# first makes ``PySide6.QtCore`` fail with ERROR_PROC_NOT_FOUND. Never ship
+# build-host ICU DLLs discovered from PATH. With these entries absent, the
+# Windows loader resolves the supported System32 ICU implementation, exactly
+# as the prepared source virtual environment does.
+FOREIGN_BUILD_HOST_ICU_DLLS = {"icuuc.dll", "icudt78.dll"}
+a.binaries = type(a.binaries)(
+    entry
+    for entry in a.binaries
+    if Path(entry[0]).name.lower() not in FOREIGN_BUILD_HOST_ICU_DLLS
+)
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

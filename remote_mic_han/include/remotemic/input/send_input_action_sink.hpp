@@ -39,6 +39,7 @@ namespace remotemic::input {
 class SendInputActionSink final : public IHostActionSink {
 public:
     SendInputActionSink();
+    explicit SendInputActionSink(std::vector<std::uint16_t> physicalize_vk_codes);
     ~SendInputActionSink() override;
 
     SendInputActionSink(const SendInputActionSink&) = delete;
@@ -71,6 +72,10 @@ private:
     std::mutex queue_mu_;
     std::condition_variable queue_cv_;
     std::vector<std::pair<std::uint16_t, bool>> key_queue_;
+    // Only these bridge-owned voice-chord VKs receive the private marker
+    // consumed by LegacyKeySuppressor. Ordinary mapped keys remain ordinary
+    // SendInput events even though they share this sink.
+    std::vector<std::uint16_t> physicalize_vk_codes_;
 
     std::atomic<std::uint64_t> submitted_count_{0};
     std::atomic<std::uint64_t> submit_error_count_{0};

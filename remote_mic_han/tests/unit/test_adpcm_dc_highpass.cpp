@@ -21,6 +21,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -204,6 +206,19 @@ int main() {
         const auto expected = fresh.process(samples);
         expect(actual == expected,
                "reset_parity_constructor: reset() on a never-used filter must match the constructor state");
+    }
+
+    for (const auto [sample_rate, cutoff_hz] :
+         std::vector<std::pair<double, double>>{{0.0, 20.0}, {-1.0, 20.0},
+                                                 {16000.0, 0.0}, {16000.0, -1.0}}) {
+        bool rejected = false;
+        try {
+            DcHighPassFilter invalid(sample_rate, cutoff_hz);
+            (void)invalid;
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        expect(rejected, "non-positive filter parameters must be rejected");
     }
 
     if (failures == 0) {

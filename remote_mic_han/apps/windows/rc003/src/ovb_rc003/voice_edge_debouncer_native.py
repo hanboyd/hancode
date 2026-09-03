@@ -7,9 +7,8 @@ either:
   * ``python``: ``ovb_rc003.voice_edge_debouncer.VoiceEdgeDebouncer``
     (the pure-Python implementation with a ``threading.Timer`` factory)
   * ``native``: ``remotemic_native._C.VoiceEdgeDebouncer`` (the
-    pybind11 binding; the bridge supplies a ``std::thread``-backed
-    TimerFactory internally so production timing matches the python
-    baseline)
+    pybind11 binding; the bridge supplies a daemon ``threading.Timer``
+    which drives the C++ debouncer's single pending-fire path)
   * ``shadow``: runs both with identical inputs; only allowed when the
     native side uses a no-thread (manual) timer (the unit-test mode).
     The shadow parity test in step 4 uses the python side directly and
@@ -30,23 +29,10 @@ TimerFactory plumbing so callers never see it.
 from __future__ import annotations
 
 import threading
-from typing import Callable, Optional
+from typing import Callable
 
 from . import voice_edge_debouncer as py_mod
 from ._remotemic_native_runtime import choose_implementation
-
-
-def _std_thread_timer_factory(delay_ms: int, callback: Callable[[], None]):
-    """Bridge-side TimerFactory for the C++ ``VoiceEdgeDebouncer``.
-
-    The C++ debouncer only knows about ``std::chrono::milliseconds``
-    and a std::function callback; we wrap a ``threading.Timer`` so
-    production behavior matches the python baseline (cancel on press
-    / shutdown, daemon thread)."""
-    timer = threading.Timer(delay_ms / 1000.0, callback)
-    timer.daemon = True
-    timer.start()
-    return timer
 
 
 class _NativeVoiceEdgeDebouncer:
@@ -57,20 +43,23 @@ class _NativeVoiceEdgeDebouncer:
     def __init__(self, release_window_seconds: float) -> None:
         import remotemic_native as _rn  # type: ignore[import-not-found]
 
+        self._timers: list[threading.Timer] = []
+        self._timers_lock = threading.Lock()
         if not _rn._C_AVAILABLE:
             self._impl = py_mod.VoiceEdgeDebouncer(release_window_seconds)
+            self._release_window_seconds = release_window_seconds
             self._is_native = False
             return
         # The C++ binding exposes the debouncer with a no-op timer
         # factory at the seam; we wrap each ``on_release`` handler in
-        # a Timer that fires after ``release_window`` and re-invokes
-        # the debouncer's fire path. The debouncer's mutex + seq
-        # invalidation logic keeps the no-thread model safe.
+        # a Timer that fires after ``release_window`` and asks the C++
+        # object to consume its pending handler.  The handler must not
+        # be invoked directly here: doing so would leave the C++ pending
+        # state armed and permit a later duplicate fire.
         self._impl = _rn.VoiceEdgeDebouncer(
             int(round(release_window_seconds * 1000))
         )
         self._release_window_seconds = release_window_seconds
-        self._timers: list[threading.Timer] = []
         self._is_native = True
 
     @property
@@ -78,29 +67,39 @@ class _NativeVoiceEdgeDebouncer:
         return self._release_window_seconds
 
     def on_press(self) -> None:
+        if not self._is_native:
+            self._impl.on_press()
+            return
         self._cancel_pending_timers()
         self._impl.on_press()
 
     def on_release(self, handler: Callable[[], None]) -> None:
+        if not self._is_native:
+            self._impl.on_release(handler)
+            return
         self._cancel_pending_timers()
-        captured_handler = handler
-        captured_timer_holder: list[Optional[threading.Timer]] = [None]
+        captured_timer_holder: list[threading.Timer | None] = [None]
 
         def _bridge() -> None:
-            self._timers = [
-                t for t in self._timers
-                if t is not captured_timer_holder[0]
-            ]
-            captured_handler()
+            with self._timers_lock:
+                self._timers = [
+                    t for t in self._timers
+                    if t is not captured_timer_holder[0]
+                ]
+            self._impl.fire_pending_now_for_test()
 
         timer = threading.Timer(self._release_window_seconds, _bridge)
         timer.daemon = True
         captured_timer_holder[0] = timer
-        self._timers.append(timer)
-        self._impl.on_release(captured_handler)
+        with self._timers_lock:
+            self._timers.append(timer)
+        self._impl.on_release(handler)
         timer.start()
 
     def shutdown(self) -> None:
+        if not self._is_native:
+            self._impl.shutdown()
+            return
         self._cancel_pending_timers()
         self._impl.shutdown()
 
@@ -108,9 +107,11 @@ class _NativeVoiceEdgeDebouncer:
         return bool(self._impl.fire_pending_now_for_test())
 
     def _cancel_pending_timers(self) -> None:
-        for timer in self._timers:
+        with self._timers_lock:
+            timers = self._timers
+            self._timers = []
+        for timer in timers:
             timer.cancel()
-        self._timers = []
 
 
 def _make_voice_edge_debouncer_python(

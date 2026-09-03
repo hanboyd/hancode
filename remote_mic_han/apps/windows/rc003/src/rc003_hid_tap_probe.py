@@ -1,7 +1,7 @@
 """Time-bounded, passive RC003 HidOverGatt report probe.
 
-Run this helper from an elevated process after ordinary Raw Input and the
-broad WM_INPUT probe have both remained silent.  It observes reports only:
+Run this helper after ordinary Raw Input and the broad WM_INPUT probe have
+both remained silent. It observes reports only:
 no host action is dispatched and no key binding is written.
 """
 
@@ -9,20 +9,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import ctypes
 import sys
 import time
 from pathlib import Path
 from typing import TextIO
 
 from ovb_rc003.frida_compat import RC003HidReportTap
-
-
-def _is_admin() -> bool:
-    try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except (AttributeError, OSError):
-        return False
 
 
 def _run(seconds: float) -> int:
@@ -33,14 +25,9 @@ def _run(seconds: float) -> int:
         reports += 1
 
     print(
-        f"RC003 HID PROBE START admin={str(_is_admin()).lower()} "
-        f"duration_seconds={seconds:g}",
+        f"RC003 HID PROBE START duration_seconds={seconds:g}",
         flush=True,
     )
-    if not _is_admin():
-        print("RC003 HID PROBE BLOCKED reason=administrator_required", flush=True)
-        return 3
-
     tap = RC003HidReportTap(on_report)
     if not tap.start():
         print(f"RC003 HID PROBE BLOCKED reason={tap.status}", flush=True)

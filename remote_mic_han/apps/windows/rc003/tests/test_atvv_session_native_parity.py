@@ -210,6 +210,24 @@ class AtvvSessionNativeParityTests(unittest.TestCase):
                         f"mic_close_command mismatch",
                     )
 
+    def test_native_rejections_keep_python_exception_abi(self) -> None:
+        from ovb_rc003 import atvv_session
+
+        cases = (
+            (b"", atvv_session.ATVVProtocolError),
+            (b"\x0b\x01\x00", atvv_session.ATVVProtocolError),
+            (
+                b"\x0b\x01\x00\x01\x00\x00\x78",
+                atvv_session.UnsupportedSampleRateError,
+            ),
+        )
+        for payload, expected_error in cases:
+            with self.subTest(payload=payload.hex()):
+                native_session = make_atvv_session_native()
+                with self.assertRaises(expected_error):
+                    native_session.handle_control(payload)
+                self.assertIsNone(native_session.capabilities)
+
 
 if __name__ == "__main__":
     unittest.main()
