@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-06
+
+### Bugfix release
+
+- Fixed the voice-edge worker retaining an in-band queue sentinel across BLE
+  disconnects: event-only shutdown and a fresh bounded queue per reconnect
+  prevent a stale sentinel from killing the restarted worker before it can
+  dispatch the next physical F5 edge (`eb1c919`).
+- Fixed the low-level keyboard hook blocking up to 60 ms on every direction-key
+  event that could never match a suppression arm. Identity/authoritative
+  arrows now pass through with zero wait, restoring the normal ~31 ms repeat
+  cadence and eliminating post-KeyUp straggler delivery on both the RC003 and
+  ordinary physical keyboards (`b9a45c6`).
+- Clearing the learned arm state when bindings are reconfigured, so a
+  custom -> identity remap restores the zero-wait fast path immediately.
+
+### Validation
+
+- Native binding rebuilt and verified as `1.0.1`; Release ctest 51/51.
+- Full package-level build gate passed (public-boundary scan, 1106 tests,
+  PyInstaller, dry-run and Qt runtime smoke).
+- Installed-build physical acceptance: RC003 direction keys and the ordinary
+  physical keyboard repeat normally and stop immediately on release; OK works;
+  voice no-probe smoke passed 3/3.
+
+### Known / Deferred
+
+- Back -> Delete, Volume Up -> Ctrl+C, Volume Down -> Ctrl+V physical fix:
+  deferred (diagnosis only).
+- HID-tap-active suppression eligibility: deferred.
+- Voice hotkey physicalization active-chain investigation: deferred.
+
 ## [1.0.0] - 2026-09-03
 
 ### First usable post-refactor release

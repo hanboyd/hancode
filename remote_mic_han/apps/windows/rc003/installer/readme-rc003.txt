@@ -15,7 +15,7 @@ Remote Mic · RC003（Windows 源码/构建候选）
   在点击"仍要运行"之前，建议先核对安装包（或便携版 ZIP）的 SHA-256 校验
   值是否与同一次构建产出的 SHA256SUMS.txt 一致。以 PowerShell 为例（把
   <文件名> 换成你实际下载的文件名，例如
-  RemoteMicRC003Setup-1.0.0-unsigned.exe）：
+  RemoteMicRC003Setup-1.0.1-unsigned.exe）：
 
       Get-FileHash -Algorithm SHA256 .\<文件名>
 
@@ -155,7 +155,7 @@ logs\app.log 会一直保留在 %LOCALAPPDATA%\RemoteMic\RC003 下，因为
 
 除麦克风外，以上每一行都可以在设置窗口"按键"页中重新指定并保存。
 
-1.0.0 已知问题：在本次验收使用的 Windows 环境中，系统没有把返回、音量+
+1.0.1 已知问题：在本次验收使用的 Windows 环境中，系统没有把返回、音量+
 和音量-作为普通 Raw Input/键盘事件交给程序，实验性的 HID tap 也被 WUDFHost
 以“访问被拒绝”阻止。因此这三个物理键当前不会执行上面显示的默认动作或用户
 自定义动作；映射配置仍会保留，后续版本再处理。Typeless 麦克风键不受此问题

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(RemoteMicWindows VERSION 1.0.0 LANGUAGES CXX)
+project(RemoteMicWindows VERSION 1.0.1 LANGUAGES CXX)
 
 option(REMOTEMIC_BUILD_TESTS "Build hardware-free C++ tests" ON)
 option(REMOTEMIC_BUILD_PYTHON "Build the CPython binding extension" OFF)
