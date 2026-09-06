@@ -667,6 +667,31 @@ class OrdinaryButtonGestureWiringTests(_AppWiringTestCase):
 
         self.assertEqual([entry[0][:2] for entry in calls], [("mic", True), ("mic", False)])
 
+    def test_voice_edge_worker_restarts_after_disconnect_without_stale_sentinel(self):
+        """A reconnect must not let an old shutdown sentinel kill its worker."""
+
+        self.app._start_voice_edge_worker()
+        previous_queue = self.app._voice_edge_queue
+        self.app._stop_voice_edge_worker()
+
+        self.assertIsNot(self.app._voice_edge_queue, previous_queue)
+        # Simulate the stale in-band sentinel left by the pre-fix shutdown
+        # path.  The replacement reconnect queue must remain clean.
+        previous_queue.put_nowait(None)
+
+        dispatched = threading.Event()
+        original = self.app._dispatch_voice_mic_edge
+        self.app._dispatch_voice_mic_edge = (
+            lambda is_pressed, host_action_handled, edge_time: dispatched.set()
+        )
+        try:
+            self.app._start_voice_edge_worker()
+            self.app._voice_edge_queue.put_nowait((True, False, None))
+            self.assertTrue(dispatched.wait(timeout=1.0))
+        finally:
+            self.app._dispatch_voice_mic_edge = original
+            self.app._stop_voice_edge_worker()
+
     def test_semantic_arrow_action_uses_its_function_executor(self):
         calls = []
         original = getattr(win32_input, "send_arrow_up", None)

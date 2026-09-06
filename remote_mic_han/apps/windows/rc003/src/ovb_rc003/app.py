@@ -899,15 +899,23 @@ class RC003App:
         """
 
         self._voice_edge_worker_stop_event.set()
-        try:
-            self._voice_edge_queue.put_nowait(None)
-        except queue.Full:
-            pass
+        # Do not put an in-band sentinel into this queue.  On a BLE
+        # disconnect the worker can observe the stop event before consuming
+        # that sentinel.  If the same queue is then reused after reconnect,
+        # the newly started worker consumes the stale sentinel and exits
+        # before it can dispatch the next physical F5 edge.
+        #
+        # ``get(timeout=0.1)`` in the worker already gives shutdown a bounded
+        # wake-up path, so the stop event is sufficient.
         self._voice_edge_debouncer.shutdown()
         thread = self._voice_edge_worker_thread
         self._voice_edge_worker_thread = None
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
+        # A reconnect is a fresh input session.  Discard any edges collected
+        # while shutdown was in progress, including sentinels left by builds
+        # from before the event-only shutdown path above.
+        self._voice_edge_queue = queue.Queue(maxsize=64)
 
     def _voice_edge_worker_loop(self) -> None:
         """Single consumer of ``_voice_edge_queue``.
