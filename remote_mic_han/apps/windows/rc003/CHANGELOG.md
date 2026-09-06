@@ -1,8 +1,26 @@
 # Changelog — Remote Mic RC003 (Windows)
 
-## [Unreleased]
+## [1.0.2] - 2026-09-07
 
-### RC003 three-button fix: device-scoped carrier remap (driver + RemoteMic)
+### Maintenance release — no new user-facing functionality in the official package
+
+- Version bump 1.0.1 → 1.0.2 (CMake / Python metadata / installer
+  `AppVersion` / binding version sync in lockstep).  The official
+  installer and portable ZIP keep the normal user-mode experience:
+  no driver, no certificate, no Secure Boot / TESTSIGNING changes,
+  no BCD edits.
+- The Back / Volume Up / Volume Down keys remain unavailable in the
+  official package (see Development status below).
+
+### Development status: three-button driver implemented and physically validated, distribution deferred
+
+The device-scoped carrier-remap HID filter is complete, physically
+validated on real hardware, and retained in the repository as the future
+production route — but it is **not included** in the 1.0.2 official
+package, because driver distribution/signing has not entered the formal
+release path.  See
+`docs/ai_context/RC003-THREE-BUTTON-DISTRIBUTION-OPTIONS.md` for the A/B/C
+distribution decision.
 
 - Root cause: Windows `kbdhid` drops keyboard-page usages 0x00F1 (Back) and
   0x0080/0x0081 (Volume Up/Down) during usage translation, so the three
@@ -20,21 +38,18 @@
   logical `volume_up` / `volume_down` / `back` ids the saved bindings
   already reference; the carriers are never exposed in the UI.  Per-event
   exact-device-path scoping keeps physical F13-F15 keyboards from being
-  mistaken for the RC003.
+  mistaken for the RC003 — with no filter present in the official package,
+  the carrier path simply never fires and other devices are unaffected.
 - Physical acceptance 2026-09-06 (Frida tap disabled, HVCI on): Back →
   Delete, Volume Up → Ctrl+C, Volume Down → Ctrl+V all pass; direction /
   OK / Mic unaffected; ordinary keyboards unaffected.  Driver uninstalled
   and `testsigning off` / Secure Boot restored after the test.
-
-### Diagnostic control device `\\.\Rc003HidCapture` fixed
-
-- The control device was created from a per-device callback and never
-  activated (`WdfControlFinishInitializing` missing), so user mode could
-  never open it (WinError 433).  It is now created from DriverEntry per the
-  KMDF control-device lifecycle, deleted on unload, and every creation
-  failure is logged (`DbgPrint`) and recorded in the driver context —
-  while remaining fail-open: a diagnostic failure can never break the
-  filter/remap path.
+- Diagnostic control device `\\.\Rc003HidCapture`: created from DriverEntry
+  per the KMDF control-device lifecycle (including the previously missing
+  `WdfControlFinishInitializing`, whose absence caused WinError 433),
+  deleted on unload, failures logged via `DbgPrint` and recorded in the
+  driver context, remaining fail-open.  Status: **offline validated** —
+  its physical open verification awaits the next driver-install round.
 - QPC frequency for capture timestamps is now read from the shared user
   page instead of a counter sample's high word.
 

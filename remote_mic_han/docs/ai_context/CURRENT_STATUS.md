@@ -1,5 +1,59 @@
 # Current Status
 
+## 2026-09-07 1.0.2 release preparation (plan A decision)
+
+- `decision`: **official 1.0.2 = plan A** — no driver in the package.
+  The official installer / portable ZIP keep the normal user-mode
+  experience: no `rc003_hid_filter.sys` / Extension INF / catalog / test
+  certificate, no BCD edits, no TESTSIGNING, no Secure Boot change, no
+  elevation beyond the existing per-user install. Back / Volume+ / Volume−
+  remain unavailable in the official package and are NOT claimed as fixed.
+- `a_b_c`: A = official (current decision); B = test-signed self-use
+  (implemented, physically validated 2026-09-06, Secure Boot OFF +
+  TESTSIGNING ON, HVCI can stay ON — not shipped); C = production-signed
+  (same architecture, future preferred route, deferred on signing
+  cost/process: EV cert requires an organization entity). Recorded in
+  `docs/ai_context/RC003-THREE-BUTTON-DISTRIBUTION-OPTIONS.md`.
+- `driver_status_wording`: the driver is now marked
+  `implemented and physically validated, distribution deferred` (NOT
+  "prototype unverified"); the control-device fix is marked
+  `offline validated` — physical open verification pending the next
+  driver-install round. Driver code/INF matching/remap algorithm
+  unchanged this round (comment/string wording only).
+- `version`: 1.0.1 → 1.0.2 in lockstep — CMake project, `pyproject.toml`,
+  `ovb_rc003.__version__`, installer `AppVersion` (exe filename follows),
+  `test_bind_smoke` expectation, README + installer readme text. New
+  `RELEASE-NOTES-1.0.2.md` describes only what the official package
+  delivers; three-button status is in Known limitations / Development
+  status (no Secure Boot / Test Mode instructions for normal users).
+- `packaging_boundary`: verified structurally (spec/iss reference no
+  driver files; no `testsigning`/`bcdedit` anywhere in product/packaging)
+  and on the built artifacts (portable dir + silently-installed tree:
+  zero `.sys`/`.inf`/`.cat`/cert/testenv hits; installed exe dry-run 0;
+  silent uninstall removed the tree). Carrier mapping code stays in
+  source; with no filter present the carrier path never fires, and the
+  per-event device-path scope still rejects any non-RC003 event.
+- `build_issue_found_and_fixed`: the first portable rebuild still carried
+  a stale 1.0.1 `_C.pyd` because PyInstaller collects from the separate
+  `build/python` CMake tree (`-B build/python -DREMOTEMIC_BUILD_PYTHON=ON`,
+  the CI packaging tree), not the default `build/` tree. Rebuilt the
+  `build/python` tree (Debug + Release + RUN_TESTS, 51/51 each), verified
+  the staged pyd reports 1.0.2, and rebuilt the portable + installer.
+- `tests`: ctest Debug 51/51 + Release 51/51 (default tree) and 51/51 +
+  51/51 (python tree, version sync 1.0.2); full package suite 1120 OK
+  (21 skips) — run twice (standalone + inside the candidate-build gate);
+  focused input/voice suites 165 OK (1 skip); packaging contract 131 OK;
+  verify_phase3/4/5 all PASS; driver EWDK build 0 warnings + InfVerif
+  VALID + remap fixtures 13/13.
+- `artifacts` (local, unsigned, dist/ is gitignored):
+  `dist/installer/RemoteMicRC003Setup-1.0.2-unsigned.exe`,
+  `dist/RemoteMicRC003/` portable one-dir, release staging in
+  `dist/release-1.0.2/`. Silent install → dry-run → silent uninstall
+  round-trip passed. Not tagged, not released, not pushed.
+- `git`: release-prep changes staged for review; commit
+  `chore(release): prepare RemoteMic 1.0.2` prepared (not yet created at
+  the time of this note; see AI_HANDOVER for the final state).
+
 ## 2026-09-07 carrier-remap consolidation + control device fix (offline round)
 
 - `decision`: **ready for commit** (awaiting user go; nothing pushed). The

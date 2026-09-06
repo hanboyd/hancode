@@ -1,5 +1,9 @@
 ;
-; RC003 HID carrier-remap filter - prototype driver package (EXTENSION INF).
+; RC003 HID carrier-remap filter - development driver package (EXTENSION INF).
+;
+; Status: implemented and physically validated (real-hardware acceptance
+; 2026-09-06), distribution deferred - not part of the official RemoteMic
+; release package.  See docs/ai_context/RC003-THREE-BUTTON-DISTRIBUTION-OPTIONS.md.
 ;
 ; The filter observes IRP_MJ_READ completions on the RC003 keyboard TLC,
 ; records metadata into its diagnostic capture ring, and rewrites the three
@@ -75,7 +79,7 @@ ServiceBinary = %12%\rc003_hid_filter.sys
 rc003_hid_filter.sys
 
 [Strings]
-ProviderName             = "RemoteMic RC003 prototype"
-DiskName                 = "RC003 HID capture filter prototype"
-Rc003HidFilter.DeviceDesc = "RC003 HID capture filter (prototype, capture-only)"
-Rc003HidFilter.ServiceDesc = "RC003 HID capture filter"
+ProviderName             = "RemoteMic RC003 development driver"
+DiskName                 = "RC003 HID carrier-remap filter (development)"
+Rc003HidFilter.DeviceDesc = "RC003 HID carrier-remap filter (development, not in official release)"
+Rc003HidFilter.ServiceDesc = "RC003 HID carrier-remap filter"

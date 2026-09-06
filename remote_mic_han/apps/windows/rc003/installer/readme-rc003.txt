@@ -1,9 +1,9 @@
 Remote Mic · RC003（Windows 源码/构建候选）
 ====================================================
 
-状态：本安装包是首个可用候选。RC003 + VB-CABLE + Typeless 语音输入已在
-安装后的冻结程序上完成真机验收；卸载、用户数据保留和重新安装也已实测。
-千问和原生 WASAPI 路径暂不纳入本候选，默认使用已通过验收的 Python
+状态：1.0.2 正式使用版本（未签名）。RC003 + VB-CABLE + Typeless 语音输入
+已在安装后的冻结程序上完成真机验收；卸载、用户数据保留和重新安装也已实测。
+千问和原生 WASAPI 路径暂不纳入，默认使用已通过验收的 Python
 协调器与 PortAudio 输出。
 
 系统要求
@@ -15,7 +15,7 @@ Remote Mic · RC003（Windows 源码/构建候选）
   在点击"仍要运行"之前，建议先核对安装包（或便携版 ZIP）的 SHA-256 校验
   值是否与同一次构建产出的 SHA256SUMS.txt 一致。以 PowerShell 为例（把
   <文件名> 换成你实际下载的文件名，例如
-  RemoteMicRC003Setup-1.0.1-unsigned.exe）：
+  RemoteMicRC003Setup-1.0.2-unsigned.exe）：
 
       Get-FileHash -Algorithm SHA256 .\<文件名>
 
@@ -155,11 +155,15 @@ logs\app.log 会一直保留在 %LOCALAPPDATA%\RemoteMic\RC003 下，因为
 
 除麦克风外，以上每一行都可以在设置窗口"按键"页中重新指定并保存。
 
-1.0.1 已知问题：在本次验收使用的 Windows 环境中，系统没有把返回、音量+
-和音量-作为普通 Raw Input/键盘事件交给程序，实验性的 HID tap 也被 WUDFHost
-以“访问被拒绝”阻止。因此这三个物理键当前不会执行上面显示的默认动作或用户
-自定义动作；映射配置仍会保留，后续版本再处理。Typeless 麦克风键不受此问题
-影响，并已完成真机验收。
+1.0.2 已知限制：Windows 的 kbdhid 不翻译 RC003 返回（0x00F1）、音量+
+（0x0080）、音量-（0x0081）三个键盘页 usage，因此这三键不会作为普通
+Raw Input/键盘事件交给程序。其底层修复方案——设备级 carrier-remap HID
+filter（rc003_hid_filter）——已开发完毕并通过 2026-09-06 实机验收，
+但本正式安装包暂不包含该 filter（driver distribution/signing 尚未进入
+正式发布路径），因此这三个物理键在本版本中不会执行上面显示的默认动作或
+用户自定义动作；映射配置仍会保留。用户无需、也不应为此修改 Secure Boot、
+TESTSIGNING 或进入 Test Mode。Typeless 麦克风键不受此问题影响，并已完成
+真机验收。
 
 物理按键与固定行为
 ------------------

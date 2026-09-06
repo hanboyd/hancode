@@ -1,4 +1,13 @@
-# RC003 HID carrier-remap filter prototype
+# RC003 HID carrier-remap filter
+
+> Status: **implemented and physically validated, distribution deferred.**
+> The remap chain passed real-hardware acceptance on 2026-09-06 (Frida tap
+> disabled, HVCI on, ordinary keyboards unaffected).  It is NOT part of the
+> official RemoteMic release package — see
+> `docs/ai_context/RC003-THREE-BUTTON-DISTRIBUTION-OPTIONS.md` for the
+> A/B/C distribution decision.  The diagnostic control device
+> `\\.\Rc003HidCapture` fix is `offline validated`; its physical open
+> verification is pending the next driver-install round.
 
 Lower filter for the RC003 Bluetooth LE keyboard TLC.  It rewrites the
 three keyboard-page usages that kbdhid cannot translate into standard

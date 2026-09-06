@@ -1,5 +1,40 @@
 # AI Handover
 
+## Active handover — 2026-09-07: 1.0.2 release preparation (plan A)
+
+- Official 1.0.2 ships WITHOUT the HID filter (plan A): normal per-user
+  install, no driver/cert/BCD/Secure Boot/TESTSIGNING changes. The three
+  buttons stay unavailable in the official package and are not claimed as
+  fixed; release notes state the fix is implemented + physically validated
+  but distribution-deferred, and never tell normal users to disable
+  Secure Boot or enter Test Mode. Plan B (test-signed self-use) and C
+  (production-signed) are retained in
+  `docs/ai_context/RC003-THREE-BUTTON-DISTRIBUTION-OPTIONS.md`.
+- Driver tree untouched functionally this round (wording/strings only):
+  status is now `implemented and physically validated, distribution
+  deferred`; control device fix = `offline validated`.
+- Version 1.0.2 lockstep: CMake / pyproject / `__version__` / installer
+  AppVersion / bind smoke / READMEs / CHANGELOG / RELEASE-NOTES-1.0.2.md.
+- Build trap found this round (important for future packaging rounds):
+  PyInstaller collects the native binding from the SEPARATE `build/python`
+  CMake tree (`-B build/python -DREMOTEMIC_BUILD_PYTHON=ON`, what the CI
+  workflow configures), NOT from the default `build/` tree. Rebuilding
+  only `build/` leaves the frozen `_C.pyd` at the previous version. Always
+  rebuild `build/python` (Debug + Release + RUN_TESTS) before any
+  packaging round and check the frozen exe's `--dry-run` version line.
+- Verification: ctest 51/51 x2 trees x2 configs; full suite 1120 OK
+  (21 skips) twice; focused suites green; verify_phase3/4/5 PASS; driver
+  build + InfVerif + fixtures green; packaging contract 131 OK; portable
+  + installer built; package-content audit zero driver/testenv hits;
+  silent install → dry-run → uninstall round-trip passed.
+- Artifacts: dist/RemoteMicRC003/ (portable), dist/installer/
+  RemoteMicRC003Setup-1.0.2-unsigned.exe, dist/release-1.0.2/ staging
+  (local only, unsigned, dist/ gitignored). No tag/release/push.
+- Next: commit `chore(release): prepare RemoteMic 1.0.2` (see the working
+  tree; reviewed set = version files + release notes + A/B/C doc + driver
+  wording), then await operator decision on release/tag (prohibited until
+  approved).
+
 ## Active handover — 2026-09-07: control device fixed, remap pinned, offline round green
 
 - This round: (1) fixed the diagnostic control device `\\.\Rc003HidCapture`,
