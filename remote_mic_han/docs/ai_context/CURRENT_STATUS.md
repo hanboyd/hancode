@@ -1,5 +1,112 @@
 # Current Status
 
+## 2026-09-07 carrier-remap consolidation + control device fix (offline round)
+
+- `decision`: **ready for commit** (awaiting user go; nothing pushed). The
+  three-button carrier-remap chain is unchanged from the 2026-09-06 physical
+  acceptance; this round fixed the diagnostic control device, pinned the
+  remap contract with tests, and ran the full offline regression.
+- `control_device_root_cause`: `\\.\Rc003HidCapture` was created from
+  `EvtDeviceAdd` (a per-device callback) and never activated — the required
+  `WdfControlFinishInitializing` was missing, so the named device object
+  stayed inactive and `CreateFile` failed with WinError 433 ("A device which
+  does not exist was specified.").  The creation failure was then silently
+  swallowed by the fail-open call site.
+- `control_device_fix`: creation moved to `DriverEntry` per the KMDF
+  control-device lifecycle (`WdfControlDeviceInitAllocate` → assign name →
+  `WdfDeviceCreate` → symbolic link → default queue →
+  `WdfControlFinishInitializing`); deleted on `EvtDriverUnload`; every
+  failure step is `DbgPrint`-logged and the final NTSTATUS is recorded in
+  the driver context (`ControlDeviceStatus`).  Fail-open preserved: a
+  diagnostic failure cannot affect filter attach/remap.  The dump tool now
+  prints a creation-failure hint instead of a bare WinError.
+- `qpc_fix`: capture timestamps' QPC frequency was previously a counter
+  sample's high word (garbage ms conversion in the dump tool); the driver
+  now copies `SharedUserData->QpcFrequency` at DriverEntry.
+- `remap_contract_pinned`: remap rules unchanged (0x0080→F13, 0x0081→F14,
+  0x00F1→F15; report ID/length preserved; only the matched 16-bit slot
+  changes; release/vendor/short/NULL reports untouched; capture records the
+  original bytes before remap).  `tests/remap_fixtures.py` replays the
+  machine's real historical wire reports against the production `remap.c`
+  (13/13).  Python carrier tests 14/14, including new device-scope tests
+  pinning that a physical F13-F15 keyboard path is rejected before any VK
+  lookup (seam: `RawInputButtonListener._device_path_matches`).
+- `boundary_scan_fix`: the public-boundary scan now excludes the driver
+  build output dirs `bin`/`obj` (both `check-public-boundary.ps1` and its
+  Python replay, kept in sync) — the fixture DLL `bin/remap.dll` is a
+  generated artifact and must not be flagged as a committed binary.
+- `driver_verification` (offline, no install this round): Debug + Release
+  builds via EWDK with /W4 /WX /SDLCheck /analyze — 0 errors 0 warnings
+  both; InfVerif /v on `rc003_hid_filter.inf` — VALID; `remap.dll` rebuilt
+  and fixtures green.  Control-device creation itself is verified by
+  construction (canonical KMDF sequence) — its live open test remains
+  deferred to the next approved driver-install round.
+- `python_verification`: full package-level suite **1120 tests OK (21
+  environment skips)**; focused input suites 123 OK / routing+input 120 OK /
+  voice+gesture 69 OK / settings 121 OK; verify_phase3/4/5 tools all PASS.
+- `git`: `/work/` added to root `.gitignore` (EWDK, BCD backups, test certs,
+  logs, prior-art must never be committed).  Commits prepared but not
+  created; nothing pushed/tagged/released.
+- `environment`: Secure Boot / TESTSIGNING / HVCI untouched this round
+  (TESTSIGNING=No, Secure Boot=True since the 2026-09-06 rollback).  The
+  driver remains uninstalled.
+
+## 2026-09-06 three-button physical acceptance PASSED (rc003_hid_filter, tap disabled)
+
+- `decision`: **three-button physical acceptance passed**. The
+  carrier-remap chain
+  `RC003 → rc003_hid_filter → F13/F14/F15 → Raw Input → logical button →
+  saved binding` was verified on real hardware with the Frida HID tap
+  explicitly disabled, so the tap cannot have been the delivery path.
+- `test_environment`: Secure Boot off, `testsigning on` (enabled via
+  `work/testenv-setup.ps1`), Memory Integrity / HVCI left **on** — the
+  test-signed driver loaded successfully with HVCI enabled (Code Integrity
+  log shows the expected testsigning session event and no rejection).
+- `install`: Release package signed with the local test cert
+  (`783BA004...`; `.sys` embedded + catalog), `pnputil /add-driver
+  rc003_hid_filter.inf /install` published **oem79.inf** and applied it as
+  an Extension to the RC003 keyboard TLC only. All other keyboard devnodes
+  (Logitech ×3, PS/2, GVInput, INTC816, Converted) kept keyboard.inf only.
+- `live_evidence` (tap disabled via the documented fail-closed mechanism —
+  gadget archive renamed, so `tap.start()` returned False and
+  `startup: RC003 HID report tap unavailable: unavailable_gadget_not_downloaded`
+  was logged; port 30684 not listening; no TAP ATTACHED / READY / gatt_read /
+  `direct HID usage` lines):
+  - Back → `arm key edge: vk=0x7E` (VK_F15) → back → Delete: user-confirmed
+    character deletion; 8 clean press/release pairs plus hold auto-repeat.
+  - Vol+ → `arm key edge: vk=0x7C` (VK_F13) → volume_up; Vol− →
+    `arm key edge: vk=0x7D` (VK_F14) → volume_down. Initially the on-disk
+    bindings were `system_volume_up/down` (volume OSD confirmed working —
+    proving the full chain + binding dispatch end to end). Per user request
+    the bindings were changed to `lctrl+c` / `lctrl+v` in
+    `key_bindings.json` (previous file backed up at
+    `work/key_bindings.backup-20260906-2336.json`), hot-reloaded via mtime
+    (`settings mappings reloaded from disk`), and copy/paste then worked.
+  - Hold auto-repeat: long presses produced repeat press streams ending in a
+    single clean release; no stuck keys.
+  - Direction keys, OK, and Mic unaffected (user-confirmed; Mic additionally
+    logged multiple complete voice cycles with signal-bearing PCM and paired
+    Typeless open/close taps, no F5 leak).
+  - UI exposure: `BUTTON_DISPLAY_NAMES` has no F13/F14/F15 entries; carriers
+    never surface in the UI; saved bindings reference the same logical ids.
+- `rollback_completed`: `pnputil /delete-driver oem79.inf /uninstall /force`
+  succeeded; RC003 TLC back to Status OK with empty filters and no extension;
+  driver store has no rc003 entry; `bcdedit /set testsigning off` done.
+  The filter service shows `DeleteFlag=1` pending a reboot to finish the
+  physical cleanup of the service key and the staged `.sys`; a reboot is
+  also required for `testsigning off` to take effect.
+- `known_diagnostic_bug`: the filter's control device `\\.\Rc003HidCapture`
+  was never created (WinError 433; fail-open swallowed the creation
+  failure in `control.c`), so the capture ring was unreadable. Recorded as a
+  diagnostic-only bug, not fixed this round and not part of the acceptance
+  claim; the remap path is independent of the ring.
+- `hack_notes`: two bridge processes are normal — the rc003 venv was created
+  by `uv python -m venv`, so `venv\Scripts\python.exe` is the CPython venv
+  launcher and its uv-python child is the real interpreter. Killing the
+  child kills the bridge.
+- `git`: nothing committed; driver prototype remains untracked under
+  `apps/windows/rc003/driver/`; the tap gadget archive filename was restored.
+
 ## 2026-09-03 release 1.0.0 — installed and ready
 
 - `version_decision`: user selected `1.0.0` for the first usable release after

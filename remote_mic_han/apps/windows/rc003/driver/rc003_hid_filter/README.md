@@ -26,7 +26,8 @@ kbdhid usage→scan-code translation.
 
 ## Layout
 
-- `src/driver.c` — DriverEntry, EvtDeviceAdd (filter setup), unload
+- `src/driver.c` — DriverEntry (creates the diagnostic control device,
+  records QPC frequency), EvtDeviceAdd (filter setup), unload
 - `src/read_capture.c` — IRP_MJ_READ interception, observation ring,
   carrier remap after capture
 - `src/remap.c` / `src/remap.h` — pure, kernel-free usage replacement
@@ -66,3 +67,21 @@ Outputs land in `bin\x64\<Configuration>\`.
 Only reports with a target/comparison usage are stored (max 256 entries,
 drop-oldest); ordinary traffic only bumps counters. No user text is ever
 logged.
+
+## Diagnostics (control device)
+
+`\\.\Rc003HidCapture` is created from **DriverEntry** (KMDF control-device
+lifecycle: `WdfControlDeviceInitAllocate` → `WdfDeviceCreate` → symbolic
+link → default queue → `WdfControlFinishInitializing`).  It is diagnostic
+and fail-open by design: a creation failure is logged via `DbgPrint` and
+recorded in the driver context (`ControlDeviceStatus`) but never prevents
+the filter from attaching or remapping.
+
+- `python tools\rc003_capture_dump.py [--clear] [--watch N]` — dump the
+  capture ring; entries record the original wire bytes (capture runs before
+  remap).
+- If the device cannot be opened, the dump tool prints the creation-failure
+  hint; the driver's `DbgPrint` trace carries the exact NTSTATUS.
+- Timestamps are QPC ticks; the dump tool converts to milliseconds using the
+  system QPC frequency the driver copies from the shared user page at
+  DriverEntry.

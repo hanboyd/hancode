@@ -79,7 +79,14 @@ def open_device(write=False):
         None,
     )
     if handle == wintypes.HANDLE(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+        error = ctypes.get_last_error()
+        raise OSError(
+            error,
+            f"CreateFile({DEVICE_PATH}) failed: {ctypes.FormatError(error)}. "
+            "If the driver is loaded but the device is missing, its creation "
+            "failed during DriverEntry; the NTSTATUS is recorded in the driver "
+            "context (ControlDeviceStatus) and logged via DbgPrint."
+        )
     return kernel32, handle
 
 

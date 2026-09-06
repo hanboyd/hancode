@@ -6,8 +6,10 @@ IOCTLs:
   - IOCTL_RC003_CAPTURE_DUMP:  header + ring snapshot (read only)
   - IOCTL_RC003_CAPTURE_CLEAR: reset ring and counters
 
-The control device is optional and diagnostic-only; any failure here must
-not affect the filter's pass-through behavior.
+The control device is created from DriverEntry (KMDF control-device
+lifecycle) and is optional and diagnostic-only; any failure here is logged
+and recorded in the driver context but must not affect the filter's
+pass-through behavior.
 --*/
 
 #include "driver.h"
@@ -31,6 +33,7 @@ Rc003ControlEvtIoDeviceControl(
     WDFDRIVER driver;
     PRC003_DRIVER_CONTEXT driverContext;
     PRC003_FILTER_CONTEXT filterContext;
+    PRC003_DUMP_HEADER header = NULL;
     PVOID outputBuffer;
     size_t bufferLength;
     size_t bytesReturned;
@@ -58,13 +61,17 @@ Rc003ControlEvtIoDeviceControl(
         RtlZeroMemory(outputBuffer, bufferLength);
         bytesReturned = 0;
 
+        if (driverContext != NULL) {
+            header = (PRC003_DUMP_HEADER)outputBuffer;
+            header->QpcFrequency = driverContext->QpcFrequency;
+        }
+
         if (driverContext != NULL && driverContext->FilterDevice != NULL) {
             filterContext = Rc003FilterGetContext(driverContext->FilterDevice);
         }
 
         if (filterContext != NULL) {
             KIRQL irql;
-            PRC003_DUMP_HEADER header = (PRC003_DUMP_HEADER)outputBuffer;
             size_t entries = 0;
             size_t slot;
             ULONG sequence;
@@ -72,7 +79,6 @@ Rc003ControlEvtIoDeviceControl(
             KeAcquireSpinLock(&filterContext->CaptureLock, &irql);
 
             KeQueryPerformanceCounter(&header->DumpTimestamp);
-            header->QpcFrequency.QuadPart = header->DumpTimestamp.HighPart;
             header->ReportsSeen = filterContext->ReportsSeen;
             header->ReportsMatched = filterContext->ReportsMatched;
             header->ReportId1Seen = filterContext->ReportId1Seen;
@@ -148,16 +154,28 @@ Rc003FilterCreateControlDevice(
     PWDFDEVICE_INIT deviceInit;
     WDF_OBJECT_ATTRIBUTES attributes;
     WDF_IO_QUEUE_CONFIG queueConfig;
-    WDFDEVICE controlDevice;
+    WDFDEVICE controlDevice = NULL;
     WDFQUEUE queue;
     PRC003_DRIVER_CONTEXT driverContext;
     NTSTATUS status;
 
+    driverContext = Rc003DriverGetContext(Driver);
+
+    /*
+     * Called from DriverEntry only: KMDF control devices must be created
+     * there (never from a per-device callback such as EvtDeviceAdd, and
+     * never more than once).  Every failure below is logged and recorded
+     * in the driver context so a missing \\.\Rc003HidCapture is never a
+     * silent loss; the caller keeps it fail-open.
+     */
     deviceInit = WdfControlDeviceInitAllocate(
         Driver,
         &SDDL_DEVOBJ_SYS_ALL_ADM_RWX_WORLD_R);
     if (deviceInit == NULL) {
-        return STATUS_INSUFFICIENT_RESOURCES;
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        DbgPrint("rc003_hid_filter: control device init allocate failed: 0x%08X\n",
+                 status);
+        goto Done;
     }
 
     WdfDeviceInitSetDeviceType(deviceInit, FILE_DEVICE_UNKNOWN);
@@ -167,20 +185,26 @@ Rc003FilterCreateControlDevice(
     WdfDeviceInitSetExclusive(deviceInit, FALSE);
     status = WdfDeviceInitAssignName(deviceInit, &Rc003ControlDeviceName);
     if (!NT_SUCCESS(status)) {
+        DbgPrint("rc003_hid_filter: control device assign name failed: 0x%08X\n",
+                 status);
         WdfDeviceInitFree(deviceInit);
-        return status;
+        goto Done;
     }
 
     WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
     status = WdfDeviceCreate(&deviceInit, &attributes, &controlDevice);
     if (!NT_SUCCESS(status)) {
-        return status;
+        DbgPrint("rc003_hid_filter: control device create failed: 0x%08X\n",
+                 status);
+        goto Done;
     }
 
     status = WdfDeviceCreateSymbolicLink(controlDevice, &Rc003ControlSymbolicLink);
     if (!NT_SUCCESS(status)) {
+        DbgPrint("rc003_hid_filter: control device symbolic link failed: 0x%08X\n",
+                 status);
         WdfObjectDelete(controlDevice);
-        return status;
+        goto Done;
     }
 
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&queueConfig,
@@ -191,16 +215,28 @@ Rc003FilterCreateControlDevice(
                               WDF_NO_OBJECT_ATTRIBUTES,
                               &queue);
     if (!NT_SUCCESS(status)) {
+        DbgPrint("rc003_hid_filter: control device queue create failed: 0x%08X\n",
+                 status);
         WdfObjectDelete(controlDevice);
-        return status;
+        goto Done;
     }
 
-    driverContext = Rc003DriverGetContext(Driver);
-    if (driverContext != NULL && driverContext->QpcFrequency.QuadPart == 0) {
-        LARGE_INTEGER qpc;
-        KeQueryPerformanceCounter(&qpc);
-        driverContext->QpcFrequency.QuadPart = qpc.HighPart;
-    }
+    /*
+     * Required final step of the KMDF control-device model: without it the
+     * named device object stays inactive and user mode cannot open
+     * \\.\Rc003HidCapture (observed as WinError 433).  VOID in KMDF - the
+     * activation itself either succeeds or the device stays inert, which
+     * the dump tool then reports as an open failure.
+     */
+    WdfControlFinishInitializing(controlDevice);
 
-    return STATUS_SUCCESS;
+    DbgPrint("rc003_hid_filter: control device \\\\.\\Rc003HidCapture created\n");
+
+Done:
+    if (driverContext != NULL) {
+        driverContext->ControlDevice =
+            NT_SUCCESS(status) ? controlDevice : NULL;
+        driverContext->ControlDeviceStatus = status;
+    }
+    return status;
 }

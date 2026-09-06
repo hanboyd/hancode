@@ -38,6 +38,13 @@ typedef struct _RC003_CAPTURE_ENTRY {
 
 typedef struct _RC003_DRIVER_CONTEXT {
     WDFDEVICE  FilterDevice;
+
+    /* Diagnostic control device (\\.\Rc003HidCapture).  Fail-open: the
+       filter path never depends on it, but its creation result is recorded
+       here instead of being silently swallowed. */
+    WDFDEVICE  ControlDevice;
+    NTSTATUS   ControlDeviceStatus;
+
     LARGE_INTEGER QpcFrequency;
 } RC003_DRIVER_CONTEXT, *PRC003_DRIVER_CONTEXT;
 

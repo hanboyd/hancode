@@ -26,6 +26,18 @@
   OK / Mic unaffected; ordinary keyboards unaffected.  Driver uninstalled
   and `testsigning off` / Secure Boot restored after the test.
 
+### Diagnostic control device `\\.\Rc003HidCapture` fixed
+
+- The control device was created from a per-device callback and never
+  activated (`WdfControlFinishInitializing` missing), so user mode could
+  never open it (WinError 433).  It is now created from DriverEntry per the
+  KMDF control-device lifecycle, deleted on unload, and every creation
+  failure is logged (`DbgPrint`) and recorded in the driver context —
+  while remaining fail-open: a diagnostic failure can never break the
+  filter/remap path.
+- QPC frequency for capture timestamps is now read from the shared user
+  page instead of a counter sample's high word.
+
 ## [1.0.1] - 2026-09-06
 
 ### Bugfix release

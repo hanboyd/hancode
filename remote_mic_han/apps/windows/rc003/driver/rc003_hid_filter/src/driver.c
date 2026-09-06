@@ -30,7 +30,18 @@ DriverEntry(
     if (NT_SUCCESS(status)) {
         PRC003_DRIVER_CONTEXT driverContext = Rc003DriverGetContext(driver);
         if (driverContext != NULL) {
-            driverContext->QpcFrequency.QuadPart = 0;
+            /* QPC frequency for capture-ring timestamps (shared user page). */
+            driverContext->QpcFrequency.QuadPart = SharedUserData->QpcFrequency;
+
+            /*
+             * Diagnostic control device.  Per KMDF's control-device model
+             * this must be created from DriverEntry (never from a
+             * per-device callback such as EvtDeviceAdd).  Fail-open: a
+             * failure is logged and recorded in the driver context but
+             * must not prevent the filter from attaching.
+             */
+            driverContext->ControlDeviceStatus =
+                Rc003FilterCreateControlDevice(driver);
         }
     }
     return status;
@@ -50,11 +61,10 @@ Rc003FilterEvtDeviceAdd(
     PRC003_DRIVER_CONTEXT driverContext;
 
     /*
-     * Fail-open: the diagnostic control device is optional.  If it cannot be
-     * created, the filter still attaches and passes every request through
-     * untouched.
+     * The diagnostic control device is created in DriverEntry (see there);
+     * nothing diagnostic may run from this per-device callback, and its
+     * outcome never affects the filter attach below.
      */
-    Rc003FilterCreateControlDevice(Driver);
 
     WdfFdoInitSetFilter(DeviceInit);
     WdfDeviceInitSetIoInCallerContextCallback(DeviceInit,
@@ -84,5 +94,15 @@ Rc003FilterEvtDriverUnload(
     _In_ WDFDRIVER Driver
     )
 {
-    UNREFERENCED_PARAMETER(Driver);
+    PRC003_DRIVER_CONTEXT driverContext = Rc003DriverGetContext(Driver);
+
+    /*
+     * A driver that creates both a control device and PnP device objects
+     * must delete the control device (PASSIVE_LEVEL) after the framework
+     * has removed the PnP devices; EvtDriverUnload satisfies that.
+     */
+    if (driverContext != NULL && driverContext->ControlDevice != NULL) {
+        WdfObjectDelete(driverContext->ControlDevice);
+        driverContext->ControlDevice = NULL;
+    }
 }

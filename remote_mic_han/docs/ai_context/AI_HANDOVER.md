@@ -1,5 +1,84 @@
 # AI Handover
 
+## Active handover — 2026-09-07: control device fixed, remap pinned, offline round green
+
+- This round: (1) fixed the diagnostic control device `\\.\Rc003HidCapture`,
+  (2) pinned the carrier-remap contract with tests, (3) ran the full offline
+  regression, (4) prepared docs + commit plan. No driver install, no Secure
+  Boot / TESTSIGNING / HVCI changes this round; the 2026-09-06 rollback state
+  is untouched (TESTSIGNING absent from BCD and the rc003_hid_filter service
+  absent — both re-verified read-only this round).
+- Control device root cause: it was created inside `EvtDeviceAdd` (a
+  per-device callback) and `WdfControlFinishInitializing` was never called,
+  so the named device stayed inactive → dump tool WinError 433, swallowed by
+  fail-open. Fix: created in `DriverEntry` (canonical KMDF sequence incl.
+  `WdfControlFinishInitializing`), deleted in `EvtDriverUnload`, every
+  failure `DbgPrint`-logged and recorded in the driver context
+  (`ControlDeviceStatus`); fail-open preserved. QPC frequency now comes from
+  `SharedUserData->QpcFrequency` (was a counter high word — garbage ms in
+  the dump tool).
+- Remap rules are unchanged from the accepted 2026-09-06 behavior; the
+  contract is now pinned by `tests/remap_fixtures.py` (13/13, real historical
+  wire reports against production `remap.c`) and `tests/test_carrier_remap.py`
+  (14/14), which adds a `RawInputButtonListener._device_path_matches` seam
+  proving a physical F13-F15 keyboard's path is rejected before any VK
+  lookup.
+- Driver verification (offline): EWDK Debug + Release, /W4 /WX /SDLCheck
+  /analyze, 0 errors 0 warnings; InfVerif /v VALID. Control-device live open
+  remains deferred to the next approved install round.
+- Python verification: full package-level suite 1120 OK (21 skips); focused
+  input/routing/voice/settings suites all green; verify_phase3/4/5 PASS.
+- Boundary scan: `bin`/`obj` added to the generated-dir exclusion list in
+  BOTH `build/check-public-boundary.ps1` and `tests/test_boundary_scan_replay.py`
+  (they must stay in sync) because the fixture DLL `driver/.../bin/remap.dll`
+  is a build output. `/work/` added to the root `.gitignore` (EWDK, BCD
+  backups, test cert, logs, prior-art — never commit).
+- Git: nothing committed yet; the planned commits (see CURRENT_STATUS) are
+  prepared and awaiting the operator. Do not push/tag/release without
+  explicit approval. The driver prototype stays untracked-but-ignored-safe:
+  its `bin/`/`obj/` are gitignored; commit only the source files listed in
+  the plan.
+- Next approved round would be: install the rebuilt driver in the test
+  environment (Secure Boot off + testsigning on, HVCI on) and verify the
+  dump tool reads the capture ring (control-device live test) — only with
+  explicit operator approval.
+
+## Active handover — 2026-09-06: three-button physical acceptance passed via rc003_hid_filter
+
+- The three previously dead physical keys (Back / Volume Up / Volume Down)
+  now pass real-device acceptance through the carrier-remap HID filter
+  (`apps/windows/rc003/driver/rc003_hid_filter`): the lower filter rewrites
+  usages 0x00F1/0x0080/0x0081 to F15/F13/F14 in the raw report before
+  kbdhid translation; RemoteMic's device-scoped Raw Input maps
+  VK_F15/F13/F14 to the existing logical `back`/`volume_up`/`volume_down`
+  ids, so the saved-binding pipeline fires unchanged.
+- Acceptance was run with the Frida HID tap explicitly disabled (gadget
+  archive renamed → documented fail-closed "tap unavailable" path; port
+  30684 closed; no TAP ATTACHED/READY/gatt_read/direct-HID lines), proving
+  the filter chain, not the tap, delivered the buttons.
+- Environment: Secure Boot off + `testsigning on` + HVCI/Memory Integrity
+  kept ON; the test-signed driver loaded with HVCI on (no CI rejection
+  events). Package = Release build, signed with the local test cert
+  (`783BA004791C91F27498C02D6578F5B10FDD58F2`), installed as oem79.inf.
+- User-observed: Back deletes; Vol+/Vol− initially adjusted system volume
+  (the on-disk bindings were `system_volume_up/down`), then per user request
+  the bindings were changed to `lctrl+c`/`lctrl+v` in `key_bindings.json`
+  (hot-reloaded; backup at `work/key_bindings.backup-20260906-2336.json`)
+  and copy/paste worked. Direction/OK/Mic unaffected; hold auto-repeat ends
+  in a clean release (no stuck keys); UI never shows F13-F15.
+- Rollback already executed: oem79.inf uninstalled/deleted, RC003 stack
+  restored (Status OK, no filters), `testsigning off` set. A reboot finishes
+  the service/file cleanup and makes testsigning off effective.
+- Open items: (1) diagnostic-only bug — the filter's control device
+  `\\.\Rc003HidCapture` was never created, so the capture ring was
+  unreadable; not fixed, not part of the acceptance claim. (2) Production
+  signing (attestation/EV) remains the future path; the prototype is a
+  test-signed dev build. (3) Nothing committed this round.
+- The two-process bridge appearance is normal: the rc003 venv was created by
+  `uv python -m venv`; `venv\Scripts\python.exe` is the CPython launcher and
+  the uv-python child is the real interpreter (kill the child = kill the
+  bridge).
+
 ## Active handover — 2026-09-03: package first usable release as 1.0.0
 
 - The user explicitly selected `1.0.0`, not `0.8.0`, for the first usable
