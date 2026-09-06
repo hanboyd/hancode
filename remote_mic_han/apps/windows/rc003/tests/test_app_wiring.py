@@ -826,6 +826,46 @@ class OrdinaryButtonGestureWiringTests(_AppWiringTestCase):
         self.assertEqual(armed, [])
 
 
+class ArmableVkCodesWiringTests(_AppWiringTestCase):
+    """The hook's zero-wait fast-path set must match the arm paths the app
+    can actually reach: identity arrows/OK are never armed, custom mappings
+    are, and the direct HID tap lifts the filter entirely."""
+
+    def test_identity_direction_ok_and_mic_keys_are_not_armable(self):
+        codes = self.app._compute_armable_vk_codes()
+        for vk_code in (0x26, 0x28, 0x25, 0x27, 0x0D, 0x74):
+            self.assertNotIn(vk_code, codes)
+
+    def test_non_identity_configured_buttons_are_armable(self):
+        codes = self.app._compute_armable_vk_codes()
+        # home/menu/tv/power/volume have non-identity default actions, so
+        # their physical edges are armed and suppressed before re-injection.
+        for vk_code in (0x24, 0x5D, 0xC0, 0x5F, 0xAF, 0xAE, 0xFF):
+            self.assertIn(vk_code, codes)
+
+    def test_custom_direction_mapping_becomes_armable(self):
+        import copy
+
+        bindings = copy.deepcopy(self.app._bindings)
+        bindings["bindings"]["up"] = {"kind": "key_combo", "keys": ["ctrl", "c"]}
+        self.app._bindings = bindings
+        self.assertIn(0x26, self.app._compute_armable_vk_codes())
+
+    def test_disabled_button_is_not_armable(self):
+        import copy
+
+        bindings = copy.deepcopy(self.app._bindings)
+        bindings["bindings"]["home"] = {"kind": "disabled", "keys": []}
+        self.app._bindings = bindings
+        self.assertNotIn(0x24, self.app._compute_armable_vk_codes())
+
+    def test_direct_hid_tap_lifts_the_armable_filter(self):
+        # The tap arms every known RC003 usage (identity keys included), so
+        # the filter must be disabled while it is active.
+        self.app._direct_hid_tap_active = True
+        self.assertIsNone(self.app._compute_armable_vk_codes())
+
+
 class PlaybackWriteFailureTests(_AppWiringTestCase):
     """XRBM-014 review round 2 P1 #6: a playback write failure must fail
     closed (discard the sink) and request a reconnect, not log indefinitely

@@ -115,6 +115,7 @@ class LegacyKeySuppressor:
         *,
         rc003_vk_codes: Optional[FrozenSet[int]] = None,
         voice_physicalize_vk_codes: Optional[FrozenSet[int]] = None,
+        armable_vk_codes: Optional[FrozenSet[int]] = None,
         consume_wait_seconds: float = 0.060,
     ) -> None:
         self._suppress_vk_codes: FrozenSet[int] = frozenset(int(vk) for vk in suppress_vk_codes)
@@ -152,6 +153,26 @@ class LegacyKeySuppressor:
         # upstream reference uses 0.06s for its correlated back/volume edges;
         # use the same conservative window for the RC003 key set.
         self._consume_wait_seconds = max(0.0, float(consume_wait_seconds))
+        # VK codes the application can actually arm.  Identity/authoritative
+        # buttons (arrows, OK) never create an arm, so waiting for one can
+        # never match - it only stalls the serialized low-level hook chain on
+        # every held-key auto-repeat, which live evidence showed throttles
+        # the repeat rate and keeps delivering repeats after KeyUp.  Events
+        # for VK codes outside this set pass through with zero wait.  ``None``
+        # (the default) keeps the previous always-wait behavior for callers
+        # that do not maintain this set.
+        self._armable_vk_codes: Optional[FrozenSet[int]] = (
+            None
+            if armable_vk_codes is None
+            else frozenset(int(vk) for vk in armable_vk_codes)
+        )
+        # VK codes an arm was observed for, regardless of the configured
+        # set.  ``arm_key_event`` records each arm, so a live bindings change
+        # (or the direct HID tap arming a new key) expands the armable
+        # surface as soon as the first real arm arrives.  Reset whenever
+        # ``set_armable_vk_codes`` installs a freshly computed set, so arms
+        # from a previous configuration never keep a stale wait alive.
+        self._armed_vks_seen: FrozenSet[int] = frozenset()
         self._armed_events: List[_ArmedKeyEvent] = []
         self._armed_events_lock = threading.Lock()
         # Raw Input and the low-level hook run on different threads, so
@@ -171,6 +192,31 @@ class LegacyKeySuppressor:
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    def set_armable_vk_codes(
+        self, armable_vk_codes: Optional[FrozenSet[int]]
+    ) -> None:
+        """Replace the armable VK set after construction.
+
+        The application recomputes this whenever its bindings change or the
+        direct HID tap starts/stops, so the hook's zero-wait fast path always
+        matches the arm paths that are actually reachable right now.
+
+        Previously observed arms belonged to the previous configuration:
+        after a custom -> identity remap, a VK that was once armed must
+        regain the zero-wait fast path instead of keeping a stale wait
+        forever.  Observed arms are therefore reset with the set, and
+        ``arm_key_event`` re-records any arm the new configuration actually
+        produces.
+        """
+
+        self._armable_vk_codes = (
+            None
+            if armable_vk_codes is None
+            else frozenset(int(vk) for vk in armable_vk_codes)
+        )
+        with self._armed_events_lock:
+            self._armed_vks_seen = frozenset()
 
     def should_suppress(self, vk_code: int, flags: int) -> bool:
         if flags & LLKHF_INJECTED:
@@ -278,6 +324,11 @@ class LegacyKeySuppressor:
             self._armed_events.append(armed)
             if len(self._armed_events) > 64:
                 self._armed_events = self._armed_events[-64:]
+            # Any producer (Raw Input or the direct HID tap) that arms a VK
+            # proves that VK is armable; expand the fast-path set so a live
+            # remap or a newly attached tap never gets a physical edge that
+            # the consume side refuses to wait for.
+            self._armed_vks_seen = self._armed_vks_seen | {int(vk_code)}
             self._armed_events_changed.notify_all()
         _logger.info(
             "arm key edge: vk=0x%X scan=0x%X ext=%s pressed=%s window=%.3fs thread=%s",
@@ -307,7 +358,10 @@ class LegacyKeySuppressor:
         remote press is not turned into a double action by the hook releasing
         the original key before the app's replacement edge arrives. The
         window only applies to the RC003 key set; every other key passes
-        through with no latency.
+        through with no latency.  It is further narrowed to VK codes the
+        application can actually arm (``_armable_vk_codes`` plus every VK an
+        ``arm_key_event`` call has been observed for): identity/authoritative
+        keys can never be armed, so they return immediately without waiting.
         """
 
         # F5 is the dedicated voice edge.  ``arm_key_event`` deliberately
@@ -321,6 +375,19 @@ class LegacyKeySuppressor:
             return False
 
         if self._rc003_vk_codes is not None and int(vk_code) not in self._rc003_vk_codes:
+            return False
+        # Zero-wait fast path: an identity/authoritative key is never armed,
+        # so no arm can ever match this event.  Waiting the full correlation
+        # window would only stall the serialized hook chain (and every
+        # held-key auto-repeat behind it) for nothing - live A/B evidence
+        # showed that stall halving the repeat rate and draining queued
+        # repeats after KeyUp.  Only VK codes the application has actually
+        # armed (or marked armable) enter the bounded wait below.
+        if (
+            self._armable_vk_codes is not None
+            and int(vk_code) not in self._armable_vk_codes
+            and int(vk_code) not in self._armed_vks_seen
+        ):
             return False
         effective_wait = (
             self._consume_wait_seconds if wait_seconds is None else max(0.0, float(wait_seconds))

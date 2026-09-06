@@ -417,6 +417,7 @@ class RC003App:
             on_key_emit=self._emit_legacy_voice_key,
             rc003_vk_codes=frozenset(raw_input_windows.KEYBOARD_VK_TO_BUTTON),
             voice_physicalize_vk_codes=voice_physicalize_vk_codes,
+            armable_vk_codes=self._compute_armable_vk_codes(),
         )
         try:
             self._legacy_key_suppressor.start()
@@ -490,6 +491,12 @@ class RC003App:
             self._direct_hid_usages = set(active)
         if active:
             self._direct_hid_tap_active = True
+            # The tap arms every known RC003 usage (identity keys included),
+            # so the hook's armable filter must be lifted while it runs.
+            if self._legacy_key_suppressor is not None:
+                self._legacy_key_suppressor.set_armable_vk_codes(
+                    self._compute_armable_vk_codes()
+                )
         for usage in sorted(pressed):
             button = frida_compat.TAP_USAGE_TO_BUTTON[usage]
             self._logger.info(
@@ -554,6 +561,10 @@ class RC003App:
         with self._direct_hid_lock:
             self._direct_hid_usages.clear()
         self._direct_hid_tap_active = False
+        if self._legacy_key_suppressor is not None:
+            self._legacy_key_suppressor.set_armable_vk_codes(
+                self._compute_armable_vk_codes()
+            )
 
         # Cancel gesture timers before stopping Raw Input. The listener's
         # forced releases then clear the dispatcher state without a late
@@ -1030,6 +1041,38 @@ class RC003App:
         )
         return action.kind == expected
 
+    def _compute_armable_vk_codes(self) -> Optional[frozenset]:
+        """VK codes an arm path can actually arm, for the hook fast path.
+
+        Identity/authoritative buttons (arrows, OK) never create a
+        suppression arm, so their VK codes must pass the low-level hook with
+        zero wait.  Custom/secondary mappings do arm their exact physical
+        edge; those VK codes keep the existing bounded correlation window.
+        When the direct HID tap is active it arms every known RC003 usage
+        (identity keys included), so the filter is disabled entirely
+        (``None``) to preserve its full-correlation behavior.
+        """
+
+        if self._direct_hid_tap_active:
+            return None
+        codes = set()
+        for button_id in key_mapping.DEFAULT_BUTTON_IDS - {"mic"}:
+            if self._physical_key_is_authoritative(button_id):
+                continue
+            if not any(
+                self._is_button_action_configured(button_id, trigger)
+                for trigger in button_gesture.ButtonTrigger
+            ):
+                continue
+            for vk_code, mapped in raw_input_windows.KEYBOARD_VK_TO_BUTTON.items():
+                if mapped == button_id:
+                    codes.add(vk_code)
+            # Untranslated-VK buttons (power/back on this device) surface as
+            # VKey=0xFF plus their consumer make code.
+            if button_id in raw_input_windows.KEYBOARD_MAKECODE_TO_BUTTON.values():
+                codes.add(0xFF)
+        return frozenset(codes)
+
     def _on_raw_input_event(self, event: raw_input_windows.RawInputEvent) -> None:
         """Arm the exact original keyboard edge for duplicate suppression.
 
@@ -1098,6 +1141,12 @@ class RC003App:
             return
         self._bindings = refreshed
         self._bindings_mtime_ns = current_mtime_ns
+        # A mapping change can make an identity key armable (custom action)
+        # or vice versa; keep the hook's zero-wait fast path in sync.
+        if self._legacy_key_suppressor is not None:
+            self._legacy_key_suppressor.set_armable_vk_codes(
+                self._compute_armable_vk_codes()
+            )
         self._logger.info("settings mappings reloaded from disk")
 
     def _on_button_event(

@@ -267,6 +267,101 @@ class LegacyKeySuppressorRaceTests(unittest.TestCase):
         self.assertTrue(matched)
 
 
+class LegacyKeySuppressorArmableFastPathTests(unittest.TestCase):
+    """Un-armable VK codes must pass the hook with zero wait so held-key
+    auto-repeat never stalls the serialized low-level hook chain (the stall
+    was observed throttling the repeat rate and draining queued repeats
+    after KeyUp)."""
+
+    def test_vk_outside_armable_set_never_waits(self):
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74},
+            rc003_vk_codes=frozenset({0x74, 0x26}),
+            armable_vk_codes=frozenset(),
+            consume_wait_seconds=10.0,
+        )
+        start = time.monotonic()
+        self.assertFalse(gate.consume_armed_key_event(0x26, 0x48, True, True))
+        self.assertLess(time.monotonic() - start, 0.25)
+
+    def test_armable_vk_keeps_the_late_arm_window(self):
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74},
+            rc003_vk_codes=frozenset({0x74, 0x26}),
+            armable_vk_codes=frozenset({0x26}),
+        )
+
+        def raw_input_thread():
+            time.sleep(0.03)
+            gate.arm_key_event(0x26, 0x48, True, True)
+
+        thread = threading.Thread(target=raw_input_thread)
+        thread.start()
+        try:
+            self.assertTrue(gate.consume_armed_key_event(0x26, 0x48, True, True))
+        finally:
+            thread.join(timeout=2)
+
+    def test_observed_arm_expands_the_armable_surface(self):
+        # A live remap or a newly attached direct HID tap arms a VK that the
+        # configured set did not include; the consume side must then wait for
+        # (and match) that arm instead of passing the physical edge through.
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74},
+            rc003_vk_codes=frozenset({0x74, 0x26}),
+            armable_vk_codes=frozenset(),
+        )
+        gate.arm_key_event(0x26, 0x48, True, True)
+        self.assertTrue(gate.consume_armed_key_event(0x26, 0x48, True, True))
+
+    def test_custom_to_identity_reconfigure_restores_fast_path(self):
+        # A VK armed under a custom mapping must not keep the correlation
+        # wait after the application reconfigures it back to identity.
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74},
+            rc003_vk_codes=frozenset({0x74, 0x26}),
+            armable_vk_codes=frozenset({0x26}),
+            consume_wait_seconds=10.0,
+        )
+        gate.arm_key_event(0x26, 0x48, True, True)
+        # Reconfigure: the app recomputes the armable set for the identity
+        # mapping and installs it (arm_key_event would otherwise keep the
+        # VK in _armed_vks_seen and the 10s wait would fire).
+        gate.set_armable_vk_codes(frozenset())
+        start = time.monotonic()
+        self.assertFalse(gate.consume_armed_key_event(0x26, 0x48, True, True))
+        self.assertLess(time.monotonic() - start, 0.25)
+
+    def test_f5_bypass_precedes_the_armable_gate(self):
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74},
+            rc003_vk_codes=frozenset({0x74, 0x26}),
+            armable_vk_codes=frozenset(),
+            consume_wait_seconds=10.0,
+        )
+        start = time.monotonic()
+        self.assertFalse(gate.consume_armed_key_event(0x74, 0x3F, False, True))
+        self.assertLess(time.monotonic() - start, 0.25)
+
+    def test_default_armable_none_keeps_previous_correlation_behavior(self):
+        # Callers that never pass an armable set (isolated helpers, older
+        # tests) keep the always-wait correlation behavior unchanged.
+        gate = suppressor.LegacyKeySuppressor(
+            {0x74}, rc003_vk_codes=frozenset({0x74, 0x26})
+        )
+
+        def raw_input_thread():
+            time.sleep(0.03)
+            gate.arm_key_event(0x26, 0x48, True, True)
+
+        thread = threading.Thread(target=raw_input_thread)
+        thread.start()
+        try:
+            self.assertTrue(gate.consume_armed_key_event(0x26, 0x48, True, True))
+        finally:
+            thread.join(timeout=2)
+
+
 class LegacyKeySuppressorLifecycleTests(unittest.TestCase):
     def test_empty_suppressor_is_a_noop(self):
         gate = suppressor.LegacyKeySuppressor(set())
