@@ -37,3 +37,6 @@ __pycache__/
 # Windows noise
 Thumbs.db
 Desktop.ini
+
+# Local-only machine scratch (EWDK, test certs, BCD backups, logs, prior-art)
+/work/

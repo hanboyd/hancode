@@ -21,10 +21,13 @@ _RC003_ROOT = Path(__file__).resolve().parents[1]
 # Mirrors $excludedDirNames in check-public-boundary.ps1 exactly - keep both
 # lists in sync. Generated/build-output directories, never source: a real
 # Python virtualenv's own binaries (.venv), PyInstaller's dist/work output
-# (dist, pyinstaller-work), and vendored third-party binaries (third_party)
+# (dist, pyinstaller-work), vendored third-party binaries (third_party), and
+# the RC003 HID filter prototype's own build outputs (driver/*/bin, obj)
 # routinely contain forbidden-binary-extension files that must never be
 # treated as "committed" content.
-_EXCLUDED_DIR_NAMES = {".venv", "dist", "pyinstaller-work", "third_party"}
+_EXCLUDED_DIR_NAMES = {
+    ".venv", "dist", "pyinstaller-work", "third_party", "bin", "obj"
+}
 
 
 def _is_excluded_generated_path(path: Path) -> bool:

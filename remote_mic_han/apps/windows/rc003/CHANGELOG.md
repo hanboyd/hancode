@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### RC003 three-button fix: device-scoped carrier remap (driver + RemoteMic)
+
+- Root cause: Windows `kbdhid` drops keyboard-page usages 0x00F1 (Back) and
+  0x0080/0x0081 (Volume Up/Down) during usage translation, so the three
+  RC003 keys never reach kbdclass / Raw Input / the low-level hook.
+  Historical wire evidence from this machine:
+  `Back 010000f10000000000`, `Vol+ 010000800000000000`,
+  `Vol− 010000810000000000`.
+- Fix: a device-specific KMDF lower filter
+  (`apps/windows/rc003/driver/rc003_hid_filter`) rewrites those usages
+  into carrier keys F15/F13/F14 (0x006A/0x0068/0x0069), equal-length and
+  in place, in report ID 1 only, after recording the original bytes into
+  the diagnostic capture ring.  Non-matching reports pass through
+  byte-identical; the filter never suppresses or injects anything.
+- RemoteMic maps the RC003-scoped carrier VKs (VK_F13/F14/F15) to the same
+  logical `volume_up` / `volume_down` / `back` ids the saved bindings
+  already reference; the carriers are never exposed in the UI.  Per-event
+  exact-device-path scoping keeps physical F13-F15 keyboards from being
+  mistaken for the RC003.
+- Physical acceptance 2026-09-06 (Frida tap disabled, HVCI on): Back →
+  Delete, Volume Up → Ctrl+C, Volume Down → Ctrl+V all pass; direction /
+  OK / Mic unaffected; ordinary keyboards unaffected.  Driver uninstalled
+  and `testsigning off` / Secure Boot restored after the test.
+
 ## [1.0.1] - 2026-09-06
 
 ### Bugfix release

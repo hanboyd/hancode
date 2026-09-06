@@ -89,6 +89,18 @@ KEYBOARD_VK_TO_BUTTON = {
     0x5D: "menu",  # VK_APPS (the standard "Application"/context-menu key)
     0xC0: "tv",  # VK_OEM_3, HID usage 0x35 on US layouts
     0x5F: "power",  # VK_SLEEP, common translation for keyboard power usage
+    # Carrier keys produced by the RC003 device-specific HID lower filter
+    # (apps/windows/rc003/driver/rc003_hid_filter): the filter rewrites the
+    # three keyboard-page usages that kbdhid cannot translate
+    # (0x0080/0x0081/0x00F1) into F13/F14/F15 so they arrive here as
+    # ordinary RC003 keyboard events.  They map to the same logical button
+    # ids the saved bindings already reference; the carriers are never shown
+    # in the UI.  Device scoping protects physical F13-F15 keyboards: every
+    # event is checked against the exact RC003 device path before this table
+    # is consulted (see _handle_raw_input).
+    0x7C: "volume_up",  # VK_F13, carrier for HID 0x0068 (filter-rewritten 0x0080)
+    0x7D: "volume_down",  # VK_F14, carrier for HID 0x0069 (filter-rewritten 0x0081)
+    0x7E: "back",  # VK_F15, carrier for HID 0x006A (filter-rewritten 0x00F1)
     0xAD: "volume_mute",  # VK_VOLUME_MUTE
     0xAF: "volume_up",  # VK_VOLUME_UP
     0xAE: "volume_down",  # VK_VOLUME_DOWN
@@ -839,6 +851,19 @@ class RawInputButtonListener:
             return 0
         return ctypes.windll.user32.DefWindowProcW(hwnd, msg, wparam, lparam)  # type: ignore[attr-defined]
 
+    def _device_path_matches(self, device_path: Optional[str]) -> bool:
+        """Per-event device scope: only events from the *exact* device path
+        selected at start() (after normalization) are accepted - not merely
+        events that re-match the RC003 VID/PID.  This is what keeps a
+        physical F13/F14/F15 keyboard from being mistaken for the RC003
+        carrier keys.
+        """
+
+        return bool(device_path) and (
+            hid_identity.normalize_device_path(device_path)
+            == self._normalized_device_path
+        )
+
     def _handle_raw_input(self, lparam) -> None:
         import ctypes
         from ctypes import wintypes
@@ -882,9 +907,7 @@ class RawInputButtonListener:
 
         header = RAWINPUTHEADER.from_buffer_copy(buffer, 0)
         device_path = _get_device_name(user32, header.hDevice, RIDI_DEVICENAME)
-        if not device_path:
-            return  # could not resolve a device path for this event at all
-        if hid_identity.normalize_device_path(device_path) != self._normalized_device_path:
+        if not self._device_path_matches(device_path):
             # Not the exact device path selected at start() - fail-closed
             # per-event scoping (XRBM-014 review round 2 P1 #4), not merely
             # "some RC003-VID/PID device".

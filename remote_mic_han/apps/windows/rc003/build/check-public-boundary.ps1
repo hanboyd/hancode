@@ -91,10 +91,11 @@ $autostartMarkers = @("CurrentVersion\\Run", "userstartup")
 # Generated/build-output directories - never source, always safe to
 # regenerate, and routinely contain forbidden-binary-extension files
 # (a virtualenv's own python.exe/*.dll/*.pyd, PyInstaller's dist/work
-# output) that must never be treated as "committed" content. Matched by
-# bare directory-name path component (see Get-NormalizedRelativePath),
+# output) that must never be treated as "committed" content, plus the
+# RC003 HID filter prototype driver build outputs (driver/*/bin, obj).
+# Matched by bare directory-name path component (see Get-NormalizedRelativePath),
 # so this is independent of which OS/shell produced the path separators.
-$excludedDirNames = @(".venv", "dist", "pyinstaller-work", "third_party")
+$excludedDirNames = @(".venv", "dist", "pyinstaller-work", "third_party", "bin", "obj")
 
 # Files that legitimately *define* the forbidden-term lists above, a
 # negative-test fixture, or a documented EXCLUSION statement - skip ONLY the

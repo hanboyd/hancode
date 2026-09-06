@@ -1,0 +1,81 @@
+;
+; RC003 HID carrier-remap filter - prototype driver package (EXTENSION INF).
+;
+; The filter observes IRP_MJ_READ completions on the RC003 keyboard TLC,
+; records metadata into its diagnostic capture ring, and rewrites the three
+; kbdhid-invisible keyboard-page usages (0x0080/0x0081/0x00F1) into the
+; carrier usages F13/F14/F15, equal-length and in place, after capture.
+; It never suppresses or injects anything; non-matching reports pass
+; through byte-identical (fail-open).
+;
+; Device scope: the INF matches only the PID-qualified vendor hardware ID
+; that HIDCLASS generated for the RC003 keyboard top-level collection:
+;   HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&012717_PID&32b8
+; (enumerated live on 2026-09-06; contains VID 2717 + PID 32B8, no device
+; instance path and no firmware revision, so it stays valid across
+; re-pairing and firmware updates).
+;
+; This is an Extension INF: ExtensionId + Class=Extension declares it as an
+; extension of the existing Microsoft keyboard base driver package
+; (keyboard.inf/kbdhid), which always remains the function driver.  The
+; extension only adds the filter.  Uninstalling this package removes only
+; the filter; the base driver is untouched by construction.
+;
+; AddFilter with FilterPosition=Lower places the filter below kbdhid (the
+; devnode function driver) and above the HIDCLASS collection PDO - the
+; attachment point at which raw input reports are visible before kbdhid
+; usage translation.  "Lower" is relative to the matched devnode's function
+; driver; it does not by itself select any finer HID internal layer.
+;
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Extension
+ClassGuid   = {E2F84CE7-8EFA-411C-AA69-97454CA4CB57}
+ExtensionId = {0DD45346-23E2-485E-83E4-F3F84672917C}
+Provider    = %ProviderName%
+DriverVer   = 09/06/2026,0.3.0.0
+CatalogFile = rc003_hid_filter.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+rc003_hid_filter.sys = 1
+
+[Manufacturer]
+%ProviderName% = Models,ntamd64.10.0...18362
+
+[Models.ntamd64.10.0...18362]
+%Rc003HidFilter.DeviceDesc% = Rc003HidFilter_Install, HID\{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&012717_PID&32b8
+
+[Rc003HidFilter_Install.NT]
+CopyFiles = Rc003HidFilter_Files
+
+[Rc003HidFilter_Install.NT.Filters]
+AddFilter = rc003_hid_filter, 0, Rc003HidFilter_Filter
+
+[Rc003HidFilter_Filter]
+FilterPosition = Lower
+
+[Rc003HidFilter_Install.NT.Services]
+AddService = rc003_hid_filter, , Rc003HidFilter_Service
+
+[Rc003HidFilter_Service]
+DisplayName   = %Rc003HidFilter.ServiceDesc%
+ServiceType   = 1      ; SERVICE_KERNEL_DRIVER
+StartType     = 3      ; SERVICE_DEMAND_START
+ErrorControl  = 1      ; SERVICE_ERROR_NORMAL
+ServiceBinary = %12%\rc003_hid_filter.sys
+
+[Rc003HidFilter_Files]
+rc003_hid_filter.sys
+
+[Strings]
+ProviderName             = "RemoteMic RC003 prototype"
+DiskName                 = "RC003 HID capture filter prototype"
+Rc003HidFilter.DeviceDesc = "RC003 HID capture filter (prototype, capture-only)"
+Rc003HidFilter.ServiceDesc = "RC003 HID capture filter"
