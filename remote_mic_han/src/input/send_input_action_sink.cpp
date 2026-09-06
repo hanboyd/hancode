@@ -41,6 +41,19 @@ namespace remotemic::input {
 
 namespace {
 
+// Raw Win32 injection backends.  These are indirected through function
+// pointers so the unit test can swap in recording fakes via
+// SetSendInputBackendsForTest() and never touch the live desktop
+// (see tests/unit/test_i_host_action_sink.cpp).  Production code always
+// runs with the real Win32 functions.
+using SendInputFn   = UINT (WINAPI*)(UINT, LPINPUT, int);
+using SendMessageFn = LRESULT (WINAPI*)(HWND, UINT, WPARAM, LPARAM);
+using KeybdEventFn  = void (WINAPI*)(BYTE, BYTE, DWORD, ULONG_PTR);
+
+SendInputFn   g_pfnSendInput   = &::SendInput;
+SendMessageFn g_pfnSendMessage = &::SendMessageW;
+KeybdEventFn  g_pfnKeybdEvent  = &::keybd_event;
+
 // Physical scan-code mapping from win32_input.py:_PHYSICAL_SCAN_CODES
 // (mirrors win32_keys.VK_CODES so we use the same numeric VK constants).
 constexpr std::uint16_t kVkCtrl  = 0x11;
@@ -155,9 +168,9 @@ UINT SendInputBatch(
         }
     }
     if (inputs.empty()) return 0;
-    return ::SendInput(static_cast<UINT>(inputs.size()),
-                       inputs.data(),
-                       static_cast<int>(sizeof(INPUT)));
+    return g_pfnSendInput(static_cast<UINT>(inputs.size()),
+                          inputs.data(),
+                          static_cast<int>(sizeof(INPUT)));
 }
 
 // System action dispatch (run on caller thread).
@@ -165,45 +178,45 @@ bool DispatchSystemAction(SystemAction action) {
     switch (action) {
         case SystemAction::VolumeUp:
             // SendMessage HWND_BROADCAST WM_APPCOMMAND 0 lparam=APPCOMMAND_VOLUME_UP<<16.
-            ::SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0,
-                           MAKELPARAM(0, APPCOMMAND_VOLUME_UP));
+            g_pfnSendMessage(HWND_BROADCAST, WM_APPCOMMAND, 0,
+                             MAKELPARAM(0, APPCOMMAND_VOLUME_UP));
             return true;
         case SystemAction::VolumeDown:
-            ::SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0,
-                           MAKELPARAM(0, APPCOMMAND_VOLUME_DOWN));
+            g_pfnSendMessage(HWND_BROADCAST, WM_APPCOMMAND, 0,
+                             MAKELPARAM(0, APPCOMMAND_VOLUME_DOWN));
             return true;
         case SystemAction::VolumeMute:
-            ::SendMessageW(HWND_BROADCAST, WM_APPCOMMAND, 0,
-                           MAKELPARAM(0, APPCOMMAND_VOLUME_MUTE));
+            g_pfnSendMessage(HWND_BROADCAST, WM_APPCOMMAND, 0,
+                             MAKELPARAM(0, APPCOMMAND_VOLUME_MUTE));
             return true;
         case SystemAction::ShowDesktop:
             // Win + D shortcut.
-            ::keybd_event(static_cast<BYTE>(kVkLWin), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(kVkD), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(kVkD), 0, KEYEVENTF_KEYUP, 0);
-            ::keybd_event(static_cast<BYTE>(kVkLWin), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkLWin), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkD), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkD), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkLWin), 0, KEYEVENTF_KEYUP, 0);
             return true;
         case SystemAction::Escape:
-            ::keybd_event(static_cast<BYTE>(kVkEscape), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(kVkEscape), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkEscape), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkEscape), 0, KEYEVENTF_KEYUP, 0);
             return true;
         case SystemAction::Return:
-            ::keybd_event(static_cast<BYTE>(VK_RETURN), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(VK_RETURN), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(VK_RETURN), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(VK_RETURN), 0, KEYEVENTF_KEYUP, 0);
             return true;
         case SystemAction::Backspace:
-            ::keybd_event(static_cast<BYTE>(VK_BACK), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(VK_BACK), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(VK_BACK), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(VK_BACK), 0, KEYEVENTF_KEYUP, 0);
             return true;
         case SystemAction::ContextMenu:
-            ::keybd_event(static_cast<BYTE>(kVkApps), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(kVkApps), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkApps), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkApps), 0, KEYEVENTF_KEYUP, 0);
             return true;
         case SystemAction::AppSwitch:
-            ::keybd_event(static_cast<BYTE>(VK_LMENU), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(kVkTab), 0, 0, 0);
-            ::keybd_event(static_cast<BYTE>(kVkTab), 0, KEYEVENTF_KEYUP, 0);
-            ::keybd_event(static_cast<BYTE>(VK_LMENU), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(VK_LMENU), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkTab), 0, 0, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(kVkTab), 0, KEYEVENTF_KEYUP, 0);
+            g_pfnKeybdEvent(static_cast<BYTE>(VK_LMENU), 0, KEYEVENTF_KEYUP, 0);
             return true;
         case SystemAction::CodexOpen:
             // No canonical Win32 binding for "open codex"; surface as
@@ -227,6 +240,23 @@ bool VerifySendInputAvailable() {
 }
 
 }  // namespace
+
+// Test-only seam (see the declaration in send_input_action_sink.hpp).
+// Swaps the raw Win32 backends behind the sink; nullptr restores the real
+// Win32 functions.  Never called by production code.
+void SetSendInputBackendsForTest(void* send_input_fn,
+                                 void* send_message_fn,
+                                 void* keybd_event_fn) {
+    g_pfnSendInput = send_input_fn != nullptr
+        ? reinterpret_cast<SendInputFn>(send_input_fn)
+        : &::SendInput;
+    g_pfnSendMessage = send_message_fn != nullptr
+        ? reinterpret_cast<SendMessageFn>(send_message_fn)
+        : &::SendMessageW;
+    g_pfnKeybdEvent = keybd_event_fn != nullptr
+        ? reinterpret_cast<KeybdEventFn>(keybd_event_fn)
+        : &::keybd_event;
+}
 
 SendInputActionSink::SendInputActionSink() = default;
 
@@ -397,6 +427,10 @@ void SendInputActionSink::stop() noexcept {}
 
 std::uint64_t SendInputActionSink::submit_error_count() const noexcept { return 0; }
 std::uint64_t SendInputActionSink::submitted_count() const noexcept { return 0; }
+
+// Non-Windows hosts: the injection backends do not exist; the test seam
+// is a harmless no-op so the header's declaration stays linkable.
+void SetSendInputBackendsForTest(void*, void*, void*) {}
 
 }  // namespace remotemic::input
 

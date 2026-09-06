@@ -81,4 +81,14 @@ private:
     std::atomic<std::uint64_t> submit_error_count_{0};
 };
 
+// Test-only injection seam (unit tests only; production code never calls
+// this).  On Windows builds, swaps the raw Win32 injection backends the
+// sink dispatches through - SendInput / SendMessageW / keybd_event - so
+// tests can verify submit wiring and argument shapes without emitting
+// real input into the user's desktop; passing nullptr for every argument
+// restores the real Win32 backends.  No-op on non-Windows builds.
+void SetSendInputBackendsForTest(void* send_input_fn,
+                                 void* send_message_fn,
+                                 void* keybd_event_fn);
+
 } // namespace remotemic::input

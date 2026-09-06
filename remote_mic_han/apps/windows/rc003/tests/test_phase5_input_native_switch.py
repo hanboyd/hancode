@@ -190,14 +190,31 @@ class HostActionSinkNativeSwitchTests(_NativeSwitchBase):
             "ovb_rc003.host_action_sink_native"
         )
         sink = mod.make_host_action_sink_python()
-        # The python shim wraps ``win32_input.send_keys`` which is
-        # unavailable on non-Windows hosts; submit_key returns False
-        # but the error counter increments. Either way: the surface
-        # contract is stable.
-        sink.submit_key(0x41, True, 50)
-        # On non-Windows CI submit returns False; the test still
-        # passes as long as no exception leaks out.
-        self.assertGreaterEqual(sink.submit_error_count(), 0)
+        # P0 input-isolation: the python shim's submit_key funnels into
+        # ``win32_input._real_send_input_batch`` (a REAL SendInput on
+        # Windows).  That backend is replaced here by a recording seam so
+        # this test never emits keyboard input into the user's desktop;
+        # the suite-wide guard in tests/__init__.py fails any test that
+        # reaches the real backend by accident.
+        real_backend = mod.py_win32_input._real_send_input_batch
+        recorded = []
+        with mock.patch.object(
+            mod.py_win32_input,
+            "_real_send_input_batch",
+            side_effect=lambda events: recorded.extend(events) or 1,
+        ) as fake_backend:
+            # While patched, the module's backend reference must NOT be
+            # the real function - the seam is what makes this safe.
+            self.assertIsNot(mod.py_win32_input._real_send_input_batch, real_backend)
+            self.assertTrue(sink.submit_key(0x41, True, 50))
+            fake_backend.assert_called_once()
+        # Contract preserved: exactly one backend call with the exact
+        # inverse-pair shape the shim documents (vk, key_up) - the shim
+        # passes key_up = not key_down, so a key-down submit is
+        # (0x41, False).
+        self.assertEqual(recorded, [(0x41, False)])
+        self.assertEqual(sink.submitted_count(), 1)
+        self.assertEqual(sink.submit_error_count(), 0)
 
     def test_unset_choice_reloads_back_to_python(self) -> None:
         os.environ[_HOST_ACTION_SINK_KEY] = "native"
