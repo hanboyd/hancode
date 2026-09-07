@@ -1,4 +1,4 @@
-# Offline Python Tools
+# 离线 Python 工具
 
-This directory is reserved for BLE capture inspection, audio analysis, log analysis, and test-fixture generation. Tools here must not become a startup or real-time dependency of the future C++ application.
+此目录预留给 BLE 采集检查、音频分析、日志分析和测试夹具生成。这里的工具不得成为未来 C++ 应用的启动依赖或实时依赖。
 

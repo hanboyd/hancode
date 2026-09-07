@@ -1,4 +1,4 @@
-# Remote Mic — Windows client (RC003)
+# Remote Mic — Windows 客户端（RC003）
 
 > **状态：1.0.2 正式使用版本（未签名）。** 此前的源码/构建候选已经完成
 > 本机真实 RC003 + VB-CABLE + Typeless 验收；Typeless 主链路已通过真实硬件验收，

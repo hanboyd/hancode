@@ -1,8 +1,8 @@
-# Test Fixtures
+# 测试夹具
 
-Store only synthetic or explicitly approved, redacted fixtures here.
+此处仅存放合成数据，或已明确批准并完成脱敏的测试夹具。
 
-Future fixture groups:
+后续夹具分组：
 
 - `atvv/valid/`
 - `atvv/malformed/`
@@ -10,5 +10,5 @@ Future fixture groups:
 - `audio/pcm-golden/`
 - `hid/reports/`
 
-Each fixture must include its source, expected result, format, and whether it contains user-derived data. Do not commit Bluetooth identifiers or voice content.
+每个夹具都必须注明其来源、预期结果、格式，以及是否包含源自用户的数据。不得提交蓝牙标识符或语音内容。
 
